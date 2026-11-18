@@ -1115,13 +1115,15 @@ void d3d_backend_init(D3DState *s) {
     dev = MTLCreateSystemDefaultDevice();
     queue = [dev newCommandQueue];
     copts = [MTLCompileOptions new];
-    copts.mathMode = MTLMathModeSafe;
+    if (@available(macOS 15.0, iOS 18.0, *)) {
+        copts.mathMode = MTLMathModeSafe;
+    }
 
     pipe_tab = calloc(PIPE_TAB, sizeof *pipe_tab); pipe_keep = [NSMutableArray array];
     samp_keep = [NSMutableArray array]; dss_keep = [NSMutableArray array];
     for (int i = 0; i < 3; i++) ring[i] = [dev newBufferWithLength:RING_SIZE options:MTLResourceStorageModeShared | MTLResourceCPUCacheModeWriteCombined];
     if (!dev || !queue || !ring[0] || !ring[1] || !ring[2]) {
-        fprintf(stderr, "[ios] Metal device, queue, or upload buffers unavailable\n");
+        fprintf(stderr, "[metal] Metal device, queue, or upload buffers unavailable\n");
         abort();
     }
     rec_init();
@@ -1133,7 +1135,7 @@ void d3d_backend_init(D3DState *s) {
         return;
     }
     layer = fnv_surface(dev, CGSizeMake(s->width, s->height));
-    if (!layer) { fprintf(stderr, "[ios] no Metal surface\n"); abort(); }
+    if (!layer) { fprintf(stderr, "[metal] no Metal surface\n"); abort(); }
     dispatch_semaphore_wait(inflight, DISPATCH_TIME_FOREVER);
 }
 static void d3d_backend_resize_impl(D3DState *s) { fnv_resize_surface(CGSizeMake(s->width, s->height)); }

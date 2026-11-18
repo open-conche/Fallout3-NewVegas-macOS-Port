@@ -114,10 +114,11 @@ SHIM(RegSetValueExA) { RET(c, 0, 6); }
 SHIM(RegCloseKey) { RET(c, 0, 1); }
 SHIM(GetUserNameA) { const char *u = "Player"; strcpy((char *)MEM + ARG(c, 0), u); P32(ARG(c, 1), 7); RET(c, 1, 2); }
 
-// ---- shell32: special folders live under the run directory --------------------------------------
+// ---- shell32: special folders live under FNV_USER_DIR (or UserDocuments) -------------------------
 SHIM(SHGetFolderPathA) {
     const char *p = "C:\\Games\\FalloutNV\\UserDocuments";
-    mkdir("UserDocuments", 0755);
+    const char *ud = getenv("FNV_USER_DIR");
+    mkdir(ud && ud[0] ? ud : "UserDocuments", 0755);
     strcpy((char *)MEM + ARG(c, 4), p);
     RET(c, 0, 5);
 }

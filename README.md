@@ -1,120 +1,94 @@
-<p align="center">
-  <img src="docs/assets/fnv-icon.png" width="144" alt="FNV iOS ranger helmet icon">
-</p>
+# Fallout: New Vegas for macOS (Apple Silicon)
 
-# Fallout: New Vegas for iOS
+A native Apple Silicon (`arm64`) macOS port of **Fallout: New Vegas** using **x86-to-C/ARM64 static recompilation** and direct **Direct3D 9 → Apple Metal** translation, packaged as a standalone `Fallout New Vegas.app` bundle with no Wine, CrossOver, Rosetta 2, or virtual machines required.
 
-**A touch optimized port of Fallout: New Vegas that runs locally on your iPhone.**
+---
 
-Explore the Mojave using your own PC copy of the game, with controls designed for
-the touchscreen: floating movement, swipe aiming, dedicated combat buttons,
-optional gyro aiming, and layouts you can customize in the app.
+## Why This Port Exists (Wine Challenges vs. Recent Improvements)
 
-This is an unofficial, experimental port. The original game runs through a native
-ARM64 runtime with Metal graphics, alongside an iOS interface for touch controls.
+*Fallout: New Vegas* combines three traits that have historically made it a worst-case scenario under Wine on Apple Silicon:
 
-**[Download a test release](https://github.com/arjuk95-dot/FNV-iOS-Shim/releases)**
-· **[Installation guide](docs/INSTALL.md)**
-· **[Touch controls](docs/TOUCH-CONTROLS.md)**
+1. **32-bit x86 executable**
+2. **Heavy x87 (80-bit) floating-point usage** — which Rosetta 2 emulates slowly in software, requiring external hooks like `rosettax87_jit` or `x87sidecar` (rarely bundled in standard Wine wrappers).
+3. **Direct3D 9** — which is unsupported by **D3DMetal (GPTK)** and **DXMT** (both focused on Direct3D 10/11/12), while the older macOS DXVK fork had limitations on top of MoltenVK.
 
-## Made for touch
+While the Wine ecosystem has improved recently — with **Wine ARM64 + FEX** in reduced-precision mode (such as CodeWeavers' CrossOver Preview) and new D3D9-to-Metal renderers (such as `mtld3d` / `Mach9`) — many free wrappers (like Sikarugir) still rely on traditional Intel Wine + Rosetta 2.
 
-- **Floating movement:** place your left thumb anywhere in the movement region;
-  lift it to stop and hide the stick.
-- **Classic swipe look:** the default restores the earlier 3× aiming response,
-  preserving the distance of fast swipes. Drag on Fire to adjust aim while shooting.
-- **Six core actions:** Fire, Aim, Interact, Jump, VATS and Pip-Boy stay within reach.
-- **Aim and gyro:** tap Aim to toggle gyro; hold it to enter ADS, then tap to exit
-  ADS without changing gyro. Slide from Aim onto Fire to aim and shoot. Adjust the
-  hold delay, shared look multiplier, aiming multiplier and per-axis gains.
-- **Optional gyro:** works both in and out of ADS, with calibration,
-  inversion and a wider sensitivity range. Gyro stays off in game menus.
-- **Utilities without clutter:** hold Pip-Boy for reload, crouch, weapon hotkeys,
-  holster/ready, camera view, gyro and More. Move actions between the wheel and More
-  in Customize Controls → Utilities; Change Ammo starts in More.
-- **Editable layouts:** move, resize, fade or hide controls; adjust the movement
-  and navigation regions; keep separate gameplay and Pip-Boy layouts.
-- **Controller fallback:** double-tap with three fingers to show a standard
-  XInput overlay for unusual menus. Repeat the gesture to return to normal.
+This port eliminates that entire stack at the root:
+* **No Rosetta 2 or FEX overhead:** game code is statically recompiled to **native ARM64**, with x87 arithmetic lowered to 64-bit `double` (53-bit precision, matching what the MSVC CRT configures on Windows).
+* **Lower RAM footprint:** running as a single native process without `wineserver`, a background Steam client, or extra translation layers saves significant memory — especially valuable on **8 GB unified-memory** Apple Silicon Macs.
+* **Direct D3D9 → Metal:** D3D9 calls and SM 1–3 shaders compile directly to Metal (`d3d9_metal.m` and `sm2msl.c`).
 
-Pip-Boy, dialogue, looting and VATS use contextual controls. Physical-controller
-input is retained alongside the touch interface. The [controls guide](docs/TOUCH-CONTROLS.md)
-explains the bindings, editor, map controls and recovery gesture.
+---
 
-## What you need
+## What Changed Compared to Upstream
 
-- **iOS 18 or later.** Current device validation is on the project owner's iPhone;
-  broader iPhone and iPad coverage is still being tested.
-- **A working LiveContainer installation** or another compatible personal signing
-  setup. The downloadable IPA is unsigned. Start with the
-  [official LiveContainer installation guide](https://livecontainer.github.io/docs/installation/).
-- **Your own matching PC installation of Fallout: New Vegas.** Release notes list
-  the supported executable identity. The game files and prepared movie files are
-  supplied separately from your installation.
-- Space for the full game, local movie files and saves. The tested game-content
-  installation occupies approximately 10 GB before extra mods.
+This repository adapts **[FNV-iOS-Shim](https://github.com/arjuk95-dot/FNV-iOS-Shim)** (which itself builds on **[Fallout-NV-MacOS](https://github.com/thetheoryofR/Fallout-NV-MacOS)**) back into a desktop **macOS** port:
 
-## Install and play
+* **Build target switched from iOS (UIKit) to macOS (AppKit):**
+  * Removed the `ios/` layer (touch controls, overlay editor, gyro handling, `verify_ipa.py`, and touch UI tests).
+  * Added the `macos/` layer with an AppKit window (`FNVApp.m`), **macOS Game Mode** support (`LSApplicationCategoryType: public.app-category.games`), automatic relative mouse capture while focused (released on `Cmd+Tab`), DirectInput keyboard mapping (`dinput.c` / `input.c`), and `GameController.framework` support (`FNVPad.c`).
+  * Retained `FNV-iOS-Shim` media and stability improvements: native PCM mixer (`FNVAudioMixer.c` + `AVAudioEngine`), Ogg/Vorbis decoding, DirectShow pull-source (`dshow.m`), native `AVFoundation` cutscene playback (`FNVNativeVideo.m`), and heap/texture/sync fixes.
+* **Restored Unicorn Engine fallback:**
+  * `FNV-iOS-Shim` had removed Unicorn fallback execution due to iOS restrictions. This port restores `upstream/recomp/host/fallback.c` and links `libunicorn.a` to handle any uncompiled code paths or edge-case instructions.
+* **Precomputed symbol maps (`symbols/fnv/`):**
+  * The original iOS project shipped without symbol maps and required a full Ghidra auto-analysis (~40 minutes) even though it only targeted a single executable.
+  * Precomputed function and jump-table metadata in `symbols/fnv/` plus `tools/ghidra/ApplyMetadataAndDump.java` cut the Ghidra step down to **~1 min** P-code export + **~3 min** C emission. For other DRM-free executables, the full Ghidra pipeline (`FixNoReturn.java`, `ResolveJumpTables.java`, `FixEntries.java`, `DumpPcode.java`) remains available automatically as a fallback.
+* **One-command installer & packager (`quick-install.sh`):**
+  * Checks for SteamStub `.bind` DRM, verifies the executable SHA-256, installs missing Homebrew dependencies (`ghidra`, `unicorn`, `cmake`, `ffmpeg`), caches codecs/objects/translations under `~/Library/Caches/fnv-macos/`, moves game data into `Fallout New Vegas.app/Contents/Resources/GameData/`, converts `.bik` cutscenes to `.mp4` via `ffmpeg`, ad-hoc signs the bundle, and optionally wraps it in a `.dmg` (`--dmg`).
+* **Additional codebase changes:**
+  * **User data outside the bundle (`FNV_USER_DIR`):** updates in `upstream/recomp/host/shims_files.c` and `shims_win.c` (`SHGetFolderPathA`) route `UserDocuments` (saves, `FALLOUT.INI`, `FalloutPrefs.ini`) to `~/Library/Application Support/FalloutNV/UserDocuments`, with logs in `~/Library/Logs/FalloutNV/fnv.log`.
+  * **macOS 14+ Metal compatibility (`d3d9_metal.m`):** guarded `copts.mathMode = MTLMathModeSafe` with `@available(macOS 15.0, iOS 18.0, *)` so the port builds and runs cleanly on macOS 14 (Sonoma) and newer.
+  * **Build & test suite updates (`tools/build.py`, `tools/app_icon.py`, `tests/`):** updated build scripts and native/host test suite for the macOS target.
 
-1. Download the game IPA from a release and import it into LiveContainer.
-2. Launch once to create the game's folders.
-3. Copy your matching executable, Data folder and configuration files into
-   `Documents/FalloutNV` inside **FNVGame's own data container**. The installation
-   guide shows the layout and the movie-file preparation step.
-4. Relaunch FNVGame, load a save or start New Game, and use the touch overlay to play.
+---
 
-**Updating an existing installation:** update the existing FNVGame entry and keep
-its data container. Your game files, saves and settings stay there; they do not
-need to be copied again. Back up your saves before updating.
+## Requirements & Supported Build
 
-## Current progress
+* **Apple Silicon Mac (`arm64`)** running **macOS 14 (Sonoma)** or later.
+* **Xcode Command Line Tools** (`xcode-select --install`) and **Homebrew**.
+* **Your own DRM-free PC copy of *Fallout: New Vegas*:**
+  * **Tested build with precomputed symbols (GOG):**
+    * File: `FalloutNV.exe`
+    * SHA-256: `89e7020487e80f20ddc92ea641c4433b2c6839a82f45a076e414d167d11dd0fe`
+  * **Epic Games Store:** since it is also DRM-free (no `.bind` section), it should work with static recompilation; however, if its SHA-256 differs from the GOG build above, `symbols/fnv/` will not match and `quick-install.sh` will fall back to full Ghidra analysis (slower, and may require address adjustments if the binary layout differs).
+  * **Steam:** Steam's `FalloutNV.exe` uses SteamStub DRM (`.bind` section) and cannot be statically recompiled, though your Steam `Data/` folder works fine with a compatible DRM-free executable.
 
-The following have been exercised on the owner's iPhone:
+---
 
-- Doc Mitchell's introduction, including the Vigor Tester and couch sequence,
-  followed by gameplay in Goodsprings.
-- Dialogue, music, effects, menu sounds, gunfire and intro movie picture/audio.
-- Interior/exterior scene changes, saving, loading and reloading after a cold launch.
-- Character cast shadows and actor self-shadowing with the documented settings.
+## Quick Install
 
-Classic swipe/gyro refinements, the app icon and Pip-Boy navigation changes are
-being delivered through test releases. Each release states its native-check results
-and remaining phone-test steps. Controller/minigame coverage, performance across
-devices, extended sessions and mod combinations remain active development areas.
+```sh
+./quick-install.sh "/path/to/Fallout New Vegas"
+```
 
-## Controls at a glance
+To also wrap the app in a drag-to-Applications `.dmg`:
 
-| Action | Touch input |
-| --- | --- |
-| Move | Floating left stick |
-| Look | Swipe the open right region; Fire also supports drag-to-look |
-| Aim / block | Aim button; toggle and hold modes are available |
-| Fire / attack | Hold Fire |
-| Interact / jump | Dedicated buttons |
-| Open Pip-Boy | Tap Pip-Boy |
-| Utilities | Hold Pip-Boy, then slide and release on a sector |
-| Edit controls | Utilities → More → Customize Controls |
-| Recover the editor | Hold four fingers for 1.2 seconds |
+```sh
+./quick-install.sh --dmg "/path/to/Fallout New Vegas"
+```
 
-Local utility wheels and the editor leave the game running. Use the game menu when
-you need to pause.
+> **Note on disk usage:** to avoid duplicating ~10 GB on disk, `quick-install.sh` **moves** the game files from the source folder into `~/Applications/Fallout New Vegas.app/Contents/Resources/GameData/`. Translation and object caches are stored in `~/Library/Caches/fnv-macos/`.
 
-## If something goes wrong
+---
 
-Keep the current run open and copy `Documents/fnv.log` from FNVGame's data container
-before launching again. Include the build number, device/iOS version, loaded save
-or location, what happened and the shortest sequence that reproduces it.
+## Manual Build & Tests
 
-For missing files, executable mismatch, movie setup and shadow settings, see the
-[installation guide](docs/INSTALL.md). For tuning or layout issues, see
-[touch controls](docs/TOUCH-CONTROLS.md).
+```sh
+# Compile host-only check (no game files required)
+python3 tools/build.py host-check
 
-## Development and credits
+# Build standalone Metal/input probe app
+python3 tools/build.py probe --out build/probe-test
 
-Build instructions and test entry points are in [DEVELOPMENT.md](docs/DEVELOPMENT.md).
-Use the source tag attached to a release when reproducing that build.
+# Run native host/media test suite
+bash tests/run.sh
+```
 
-This project builds on [Fallout-NV-MacOS](https://github.com/thetheoryofR/Fallout-NV-MacOS)
-and its public host/recompiler work. The original host's license is retained in
-[upstream/LICENSE](upstream/LICENSE); Ogg/Vorbis notices are included in the IPA.
-Fallout: New Vegas and its original content belong to their respective owners.
+---
+
+## Credits
+
+* **[Fallout-NV-MacOS](https://github.com/thetheoryofR/Fallout-NV-MacOS)** (by **thetheoryofR**) — Original x86→C/ARM64 static recompiler, D3D9→Metal renderer, Win32/COM host, and Unicorn fallback (MIT license in `upstream/LICENSE`).
+* **[FNV-iOS-Shim](https://github.com/arjuk95-dot/FNV-iOS-Shim)** (by **arjuk95-dot**) — Native audio mixer (`AVAudioEngine`), Ogg/Vorbis bridge, `AVFoundation` video, DirectShow pull-source, and heap/texture/sync fixes.
+* **[macIV](https://github.com/tanmayisdumb/macIV)** — App bundle packaging and `quick-install.sh` UX inspiration.

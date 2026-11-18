@@ -7,3 +7,6 @@ __pycache__/
 *.jsonl
 gen/
 !upstream/recomp/host/gen/
+
+.DS_Store
+._*

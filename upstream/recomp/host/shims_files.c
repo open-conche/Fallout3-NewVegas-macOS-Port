@@ -47,6 +47,7 @@ void host_path(const char *win, char *out, size_t n) {
     if (!n) return;
     if (!win) { out[0]=0; return; }
     const char *root = getenv("FNV_ROOT");
+    const char *user_dir = getenv("FNV_USER_DIR");
     char tmp[1024]; size_t k = 0;
     const char *p = win;
     if (p[0] && p[1] == ':') {                         // "C:\Games\FalloutNV\Data\x" -> root + rest
@@ -56,7 +57,20 @@ void host_path(const char *win, char *out, size_t n) {
             && !strncasecmp(q,"FalloutNV",9) && (!q[9]||q[9]=='\\'||q[9]=='/')) { game=q;break; }
         if (game) { p=game+9;if (*p) p++; }
         else if (*p == '\\'||*p=='/') p++;
-        k = (size_t)snprintf(tmp, sizeof tmp, "%s/", root ? root : ".");
+        if (user_dir && user_dir[0] && !strncasecmp(p, "UserDocuments", 13) &&
+            (!p[13] || p[13] == '\\' || p[13] == '/')) {
+            p += 13;
+            if (*p == '\\' || *p == '/') p++;
+            k = (size_t)snprintf(tmp, sizeof tmp, *p ? "%s/" : "%s", user_dir);
+        } else {
+            k = (size_t)snprintf(tmp, sizeof tmp, "%s/", root ? root : ".");
+        }
+        if (k>=sizeof tmp) k=sizeof tmp-1;
+    } else if (user_dir && user_dir[0] && !strncasecmp(p, "UserDocuments", 13) &&
+               (!p[13] || p[13] == '\\' || p[13] == '/')) {
+        p += 13;
+        if (*p == '\\' || *p == '/') p++;
+        k = (size_t)snprintf(tmp, sizeof tmp, *p ? "%s/" : "%s", user_dir);
         if (k>=sizeof tmp) k=sizeof tmp-1;
     }
     for (; *p && k < sizeof tmp - 1; p++) tmp[k++] = *p == '\\' ? '/' : *p;
