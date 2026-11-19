@@ -74,14 +74,10 @@ Because *Fallout: New Vegas* is a Windows-only release on Steam and GOG, you can
 
 ```sh
 brew install --cask steamcmd
-steamcmd +@sSteamCmdForcePlatformType windows \
-  +force_install_dir "$HOME/Downloads/Fallout New Vegas" \
-  +login <YOUR_STEAM_USERNAME> \
-  +app_update 22380 validate \
-  +quit
+steamcmd +@sSteamCmdForcePlatformType windows +login <YOUR_STEAM_USERNAME> +app_update 22380 validate +quit
 ```
 
-*Without `+force_install_dir`, `steamcmd` downloads into `~/Library/Application Support/Steam/steamapps/common/Fallout New Vegas` (or `~/Steam/steamapps/common/Fallout New Vegas`), both of which `quick-install.sh` auto-detects.*
+*This downloads the game (along with any DLCs owned by your account) directly into `~/Library/Application Support/Steam/steamapps/common/Fallout New Vegas` (or `~/Steam/steamapps/common/Fallout New Vegas`), both of which `quick-install.sh` auto-detects. Pass `+force_install_dir "$HOME/Downloads/Fallout New Vegas"` before `+login` if you prefer a separate folder.*
 
 #### Method B — `DepotDownloader`
 
