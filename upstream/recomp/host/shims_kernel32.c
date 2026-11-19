@@ -271,7 +271,7 @@ static const Shim kernel32[] = {
 };
 
 typedef struct { const Shim *list; int count; } ShimTable;
-extern const ShimTable sync_shims, file_shims, text_shims, win_shims, dinput_shims, dsound_shims, d3d9_shims, d3dx_shims, xinput_shims, media_shims, mmio_shims;
+extern const ShimTable sync_shims, file_shims, text_shims, win_shims, steam_shims, dinput_shims, dsound_shims, d3d9_shims, d3dx_shims, xinput_shims, media_shims, mmio_shims;
 ShimFn host_find_shim(const char *dll, const char *name) {
     // ordinal imports collide across DLLs: look them up as "<dll basename, lowercase>#<n>"
     char key[160];
@@ -284,7 +284,7 @@ ShimFn host_find_shim(const char *dll, const char *name) {
     }
     for (size_t i = 0; i < sizeof kernel32 / sizeof *kernel32; i++)
         if (!strcmp(kernel32[i].name, name)) return kernel32[i].fn;
-    const ShimTable *tabs[] = {&sync_shims, &file_shims, &text_shims, &win_shims, &dinput_shims, &dsound_shims, &d3d9_shims, &d3dx_shims, &xinput_shims, &media_shims, &mmio_shims};
+    const ShimTable *tabs[] = {&sync_shims, &file_shims, &text_shims, &win_shims, &steam_shims, &dinput_shims, &dsound_shims, &d3d9_shims, &d3dx_shims, &xinput_shims, &media_shims, &mmio_shims};
     for (size_t t = 0; t < sizeof tabs / sizeof *tabs; t++)
         for (int i = 0; i < tabs[t]->count; i++)
             if (!strcmp(tabs[t]->list[i].name, name)) return tabs[t]->list[i].fn;

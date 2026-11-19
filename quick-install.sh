@@ -1,17 +1,26 @@
 #!/bin/bash
 # Fallout: New Vegas native macOS (Apple Silicon) quick builder & packager.
 #
-# Recompiles your own DRM-free PC copy of Fallout: New Vegas (GOG/Epic)
+# Recompiles your own PC copy of Fallout: New Vegas (Steam, GOG, or Epic)
 # into a standalone Apple Silicon macOS bundle ("Fallout New Vegas.app").
 #
-# Usage: quick-install.sh [--dmg] [--keep-ghidra] [game_files_dir]
+# Usage: quick-install.sh [--dmg] [--keep-ghidra] [--unpack-drm] [--no-steam] [game_files_dir]
 #   --dmg            also wrap the app in "Fallout New Vegas.dmg"
 #   --keep-ghidra    keep the Ghidra project and P-code JSONL after translation
+#   --unpack-drm     unattended: allow downloading Steamless + Mono to strip SteamStub DRM
+#   --no-steam       keep Steam builds in offline mode (skip Steam launcher, overlay & libsteam_api.dylib)
 #   game_files_dir   optional folder containing FalloutNV.exe and Data/
 #                    or an existing "Fallout New Vegas.app" bundle.
 set -euo pipefail
 
-EXPECTED_EXE_SHA256="89e7020487e80f20ddc92ea641c4433b2c6839a82f45a076e414d167d11dd0fe"
+GOG_EXE_SHA256="89e7020487e80f20ddc92ea641c4433b2c6839a82f45a076e414d167d11dd0fe"
+STEAM_OG_EXE_SHA256="3a87f92f011e5dc9179ddf733cf08be2b39ea6e5b7a8a9e3a9a72dafcc1b104d"
+STEAM_UNPACKED_EXE_SHA256="19406942e48724d797300c4ea6be9ac69a32f670b8c35db09279a2258422739f"
+STEAMLESS_VERSION="v3.1.0.5"
+STEAMLESS_URL="https://github.com/atom0s/Steamless/releases/download/v3.1.0.5/Steamless.v3.1.0.5.-.by.atom0s.zip"
+STEAMLESS_ZIP_SHA256="e3e2d22e098ff3fb359b2876aa2bed9596f0501e6ff588cbffae90a76d2dc4f5"
+STEAMWORKS_URL="https://github.com/rlabrecque/Steamworks.NET/releases/download/20.1.0/Steamworks.NET_20.1.0.unitypackage"
+STEAMWORKS_SHA256="3be79e6bdf53c86210267bf39f46362bb839130896006aec26364c5efc37e314"
 APP_NAME="Fallout New Vegas"
 VOLNAME="$APP_NAME"
 DEST_DIR="$HOME/Applications"
@@ -156,11 +165,15 @@ run_task() {
 # ---------------------------------------------------------------------------
 WANT_DMG=no
 KEEP_GHIDRA=no
+UNPACK_DRM=no
+NO_STEAM=no
 GAME_ARG=""
 for arg in "$@"; do
 	case "$arg" in
 		--dmg) WANT_DMG=yes ;;
 		--keep-ghidra) KEEP_GHIDRA=yes ;;
+		--unpack-drm) UNPACK_DRM=yes ;;
+		--no-steam) NO_STEAM=yes ;;
 		*) GAME_ARG="$arg" ;;
 	esac
 done
@@ -210,8 +223,11 @@ resolve_game_dir() {
 	for root in "$base" "$base.app"; do
 		for dir in \
 			"$root" \
+			"$root/app" \
 			"$root/Fallout New Vegas" \
+			"$root/Fallout New Vegas/app" \
 			"$root/Fallout New Vegas Ultimate" \
+			"$root/steamapps/common/Fallout New Vegas" \
 			"$root/Contents/Resources/GameData"; do
 			if [ -f "$dir/FalloutNV.exe" ] && [ -f "$dir/Data/FalloutNV.esm" ]; then
 				echo "$dir"
@@ -227,29 +243,44 @@ if [ -n "$GAME_ARG" ]; then
 	ASSET_SRC="$(resolve_game_dir "$GAME_ARG" || true)"
 	[ -n "$ASSET_SRC" ] || die "Could not find FalloutNV.exe + Data/FalloutNV.esm in: $GAME_ARG"
 else
-	for candidate in \
-		"/Applications/$APP_NAME.app" \
-		"$HOME/Applications/$APP_NAME.app" \
-		"$HOME/Downloads/Fallout New Vegas" \
-		"$HOME/Downloads/Fallout New Vegas Ultimate" \
-		"$HOME/Games/Fallout New Vegas" \
-		"$HOME/Library/Application Support/Steam/steamapps/common/Fallout New Vegas" \
-		"$HOME/Downloads/$APP_NAME.app"; do
+	CANDIDATES=(
+		"/Applications/$APP_NAME.app"
+		"$HOME/Applications/$APP_NAME.app"
+		"$HOME/Downloads/$APP_NAME.app"
+		"$HOME/Downloads/Fallout New Vegas"
+		"$HOME/Downloads/Fallout New Vegas Ultimate"
+		"$HOME/Downloads/fnv"
+		"$HOME/Downloads/app"
+		"$HOME/Games/Fallout New Vegas"
+		"$HOME/Library/Application Support/Steam/steamapps/common/Fallout New Vegas"
+		"$HOME/Steam/steamapps/common/Fallout New Vegas"
+		"$HOME/Steam/fnv"
+		"$HOME/Documents/Fallout New Vegas"
+	)
+	shopt -s nullglob
+	CANDIDATES+=(
+		"$HOME"/Downloads/depots/22380/*
+		"$HOME"/depots/22380/*
+		"$HOME"/Downloads/depots/22490/*
+		"$HOME"/depots/22490/*
+	)
+	shopt -u nullglob
+	for candidate in "${CANDIDATES[@]}"; do
 		ASSET_SRC="$(resolve_game_dir "$candidate" || true)"
 		[ -n "$ASSET_SRC" ] && break
 	done
 fi
 
 [ -n "$ASSET_SRC" ] || die "Fallout: New Vegas folder not found." \
-	"Pass the path to your DRM-free Fallout New Vegas folder (containing FalloutNV.exe and Data/):" \
+	"Pass the path to your Fallout New Vegas folder (containing FalloutNV.exe and Data/):" \
 	"  ./quick-install.sh ~/Downloads/\"Fallout New Vegas\""
 
 ok "Found game files at: $ASSET_SRC"
 
 EXE_PATH="$ASSET_SRC/FalloutNV.exe"
 
-# Check for SteamStub DRM (.bind section)
-HAS_BIND=$(python3 - "$EXE_PATH" <<'PY'
+has_bind_section() {
+	python3 - "$1" <<'PY'
 import struct, sys
 d = open(sys.argv[1], 'rb').read()
 pe = struct.unpack_from('<I', d, 0x3c)[0]
@@ -258,18 +289,105 @@ o = struct.unpack_from('<H', d, pe + 20)[0]
 secs = [d[pe + 24 + o + 40 * i : pe + 24 + o + 40 * i + 8].rstrip(b'\x00') for i in range(n)]
 print('yes' if b'.bind' in secs else 'no')
 PY
-)
-if [ "$HAS_BIND" = yes ]; then
-	die "SteamStub DRM detected in FalloutNV.exe (.bind section present)." \
-		"The static recompiler requires an unencrypted, DRM-free executable (such as GOG or Epic)." \
-		"Your Steam Data/ folder works fine, but FalloutNV.exe must be DRM-free."
-fi
+}
 
+unpack_steam_drm() {
+	if ! command -v mono >/dev/null 2>&1; then
+		command -v brew >/dev/null 2>&1 || die "Homebrew is required to install Mono for Steamless." \
+			"Install Homebrew from https://brew.sh and re-run this script."
+		run_task "Installing Mono runtime via Homebrew" brew install mono
+	fi
+	local mono_bin
+	mono_bin="$(command -v mono || true)"
+	[ -n "$mono_bin" ] || die "Mono runtime not found after installation."
+
+	local steamless_dir="$CACHE_ROOT/steamless/$STEAMLESS_VERSION"
+	if [ ! -f "$steamless_dir/Steamless.CLI.exe" ] || [ ! -f "$steamless_dir/Plugins/Steamless.API.dll" ]; then
+		local zip_path="$TMP/steamless.zip"
+		rm -rf "$steamless_dir"
+		mkdir -p "$steamless_dir"
+		run_task "Downloading official Steamless ($STEAMLESS_VERSION)" \
+			curl -fsSL "$STEAMLESS_URL" -o "$zip_path"
+		local zip_sha
+		zip_sha="$(shasum -a 256 "$zip_path" | awk '{print $1}')"
+		if [ "$zip_sha" != "$STEAMLESS_ZIP_SHA256" ]; then
+			rm -rf "$steamless_dir"
+			die "Downloaded Steamless archive SHA-256 mismatch." \
+				"Expected: $STEAMLESS_ZIP_SHA256" \
+				"Got:      $zip_sha"
+		fi
+		run_task "Extracting Steamless ($STEAMLESS_VERSION)" \
+			unzip -qo "$zip_path" -d "$steamless_dir"
+		[ -f "$steamless_dir/Steamless.CLI.exe" ] || die "Steamless.CLI.exe missing after extraction."
+	else
+		ok "Using cached Steamless ($STEAMLESS_VERSION)"
+	fi
+
+	if [ ! -f "${EXE_PATH}.og" ]; then
+		cp -p "$EXE_PATH" "${EXE_PATH}.og"
+		ok "Backed up original executable to $(basename "${EXE_PATH}.og")"
+	fi
+
+	local work_dir="$TMP/steamless-work"
+	local work_exe="$work_dir/FalloutNV.exe"
+	local log_file="$TMP/steamless.log"
+	mkdir -p "$work_dir"
+	cp "$EXE_PATH" "$work_exe"
+
+	if ! run_task "Removing SteamStub DRM with Steamless CLI (Mono)" \
+		bash -c 'MONO_PATH="$1" "$2" "$3" "$4" >"$5" 2>&1' _ \
+		"$steamless_dir/Plugins" "$mono_bin" "$steamless_dir/Steamless.CLI.exe" "$work_exe" "$log_file"; then
+		cat "$log_file" >&2 || true
+		die "Steamless failed to unpack FalloutNV.exe."
+	fi
+
+	local unpacked="$work_exe.unpacked.exe"
+	[ -f "$unpacked" ] || { cat "$log_file" >&2 || true; die "Steamless did not produce an unpacked executable."; }
+	[ "$(has_bind_section "$unpacked")" = no ] || die "Unpacked FalloutNV.exe still contains a .bind section."
+
+	mv "$unpacked" "$EXE_PATH"
+	chmod +x "$EXE_PATH"
+}
+
+HAS_BIND="$(has_bind_section "$EXE_PATH")"
 ACTUAL_SHA="$(shasum -a 256 "$EXE_PATH" | awk '{print $1}')"
-if [ "$ACTUAL_SHA" = "$EXPECTED_EXE_SHA256" ]; then
-	ok "Verified DRM-free FalloutNV.exe (SHA-256 matches supported build)"
+
+if [ "$ACTUAL_SHA" = "$GOG_EXE_SHA256" ] && [ "$HAS_BIND" = no ]; then
+	ok "Verified DRM-free GOG FalloutNV.exe (SHA-256 matches precomputed symbols)"
+elif [ "$ACTUAL_SHA" = "$STEAM_UNPACKED_EXE_SHA256" ] && [ "$HAS_BIND" = no ]; then
+	ok "Verified unpacked Steam FalloutNV.exe (SHA-256 matches precomputed Steam symbols)"
+elif [ "$ACTUAL_SHA" = "$STEAM_OG_EXE_SHA256" ] || [ "$HAS_BIND" = yes ]; then
+	if [ "$ACTUAL_SHA" = "$STEAM_OG_EXE_SHA256" ]; then
+		warn "Detected Steam FalloutNV.exe with SteamStub DRM ($ACTUAL_SHA)"
+	else
+		warn "SteamStub DRM detected in FalloutNV.exe (.bind section present, $ACTUAL_SHA)"
+	fi
+	printf '    The static recompiler requires an unencrypted executable.\n'
+	printf '    This script can download official Steamless (%s) + Mono (if missing),\n' "$STEAMLESS_VERSION"
+	printf '    back up FalloutNV.exe to FalloutNV.exe.og, and strip the DRM automatically.\n'
+
+	if [ "$UNPACK_DRM" != yes ]; then
+		if [ -t 0 ]; then
+			printf '  %s?%s Remove SteamStub DRM now? [y/N] ' "$CYAN" "$RESET"
+			read -r REPLY
+			case "$REPLY" in
+				[yY]|[yY][eE][sS]|[sS]) UNPACK_DRM=yes ;;
+				*) die "Aborted. Cannot statically recompile a SteamStub-packed executable." ;;
+			esac
+		else
+			die "Non-interactive session: re-run interactively or pass --unpack-drm to strip SteamStub DRM."
+		fi
+	fi
+
+	unpack_steam_drm
+	ACTUAL_SHA="$(shasum -a 256 "$EXE_PATH" | awk '{print $1}')"
+	if [ "$ACTUAL_SHA" = "$STEAM_UNPACKED_EXE_SHA256" ]; then
+		ok "Removed SteamStub DRM (SHA-256 matches precomputed Steam symbols)"
+	else
+		warn "Removed SteamStub DRM, but unpacked SHA-256 differs ($ACTUAL_SHA)"
+	fi
 else
-	warn "FalloutNV.exe SHA-256 differs from supported build ($ACTUAL_SHA)"
+	warn "FalloutNV.exe SHA-256 differs from supported GOG/Steam builds ($ACTUAL_SHA)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -336,8 +454,13 @@ else
 	EXE_NAME="$(basename "$EXE_PATH")"
 
 	mkdir -p "$GHIDRA_PROJ" "$PASS_OUT"
-	SYM_DIR="$SCRIPT_DIR/symbols/fnv"
-	if [ "$ACTUAL_SHA" = "$EXPECTED_EXE_SHA256" ] && [ -f "$SYM_DIR/functions.tsv" ]; then
+	SYM_DIR=""
+	if [ "$ACTUAL_SHA" = "$GOG_EXE_SHA256" ]; then
+		SYM_DIR="$SCRIPT_DIR/symbols/fnv"
+	elif [ "$ACTUAL_SHA" = "$STEAM_UNPACKED_EXE_SHA256" ]; then
+		SYM_DIR="$SCRIPT_DIR/symbols/fnv-steam"
+	fi
+	if [ -n "$SYM_DIR" ] && [ -f "$SYM_DIR/functions.tsv" ]; then
 		ok "Using precomputed function & jump-table metadata ($SYM_DIR)"
 		rm -rf "$GHIDRA_PROJ/fnv.gpr" "$GHIDRA_PROJ/fnv.rep"
 		run_task "Disassembling & exporting P-code (~1 min, no Ghidra auto-analysis)" \
@@ -427,6 +550,49 @@ OBJ_CACHE="$CACHE_ROOT/objects-$SHORT_SHA"
 BUILD_OUT="$TMP/build"
 mkdir -p "$BUILD_OUT"
 
+STEAM_BUILD_ARGS=()
+if [ "$NO_STEAM" != yes ] && [ "$ACTUAL_SHA" != "$GOG_EXE_SHA256" ] && { [ "$ACTUAL_SHA" = "$STEAM_UNPACKED_EXE_SHA256" ] || [ -f "$ASSET_SRC/steam_api.dll" ]; }; then
+	SW_DIR="$CACHE_ROOT/steamworks/20.1.0"
+	SW_DYLIB="$SW_DIR/libsteam_api.dylib"
+	if [ ! -f "$SW_DYLIB" ]; then
+		SW_PKG="$TMP/Steamworks.NET_20.1.0.unitypackage"
+		SW_EXTRACT="$TMP/steamworks-extract"
+		if run_task "Downloading Steamworks.NET 20.1.0 (Valve libsteam_api.dylib)" \
+			curl -fsSL --retry 3 "$STEAMWORKS_URL" -o "$SW_PKG"; then
+			SW_GOT="$(shasum -a 256 "$SW_PKG" | awk '{print $1}')"
+			if [ "$SW_GOT" = "$STEAMWORKS_SHA256" ]; then
+				mkdir -p "$SW_DIR" "$SW_EXTRACT"
+				tar -xzf "$SW_PKG" -C "$SW_EXTRACT"
+				for d in "$SW_EXTRACT"/*; do
+					[ -f "$d/asset" ] && [ -f "$d/pathname" ] || continue
+					p="$(head -n 1 "$d/pathname")"
+					case "$p" in
+						*/Plugins/steam_api.bundle/Contents/MacOS/libsteam_api.dylib)
+							cp "$d/asset" "$SW_DYLIB"
+							chmod 755 "$SW_DYLIB"
+							break
+							;;
+					esac
+				done
+			else
+				warn "Steamworks.NET SHA-256 mismatch ($SW_GOT); building offline without Steam achievements"
+			fi
+		else
+			warn "Failed to download Steamworks.NET; building offline without Steam achievements"
+		fi
+	else
+		ok "Using cached Valve libsteam_api.dylib"
+	fi
+	if [ -f "$SW_DYLIB" ]; then
+		STEAM_APPID="22380"
+		if [[ "$ASSET_SRC" == *"/22490/"* ]] || [ -f "$ASSET_SRC/../../appmanifest_22490.acf" ]; then
+			STEAM_APPID="22490"
+		fi
+		STEAM_BUILD_ARGS=(--steam-api-dylib "$SW_DYLIB" --steam-appid "$STEAM_APPID")
+		ok "Bundling Steam launcher, Overlay hook & libsteam_api.dylib (AppID $STEAM_APPID)"
+	fi
+fi
+
 printf '  %sCompiling translation units with Apple Clang (cached incrementally)...%s\n' "$DIM" "$RESET"
 python3 "$SCRIPT_DIR/tools/build.py" game \
 	--generated "$GEN_DIR" \
@@ -436,6 +602,7 @@ python3 "$SCRIPT_DIR/tools/build.py" game \
 	--cache "$OBJ_CACHE" \
 	--out "$BUILD_OUT" \
 	--app-name "$APP_NAME" \
+	${STEAM_BUILD_ARGS[@]+"${STEAM_BUILD_ARGS[@]}"} \
 	--no-call-trace
 
 APP="$BUILD_OUT/$APP_NAME.app"

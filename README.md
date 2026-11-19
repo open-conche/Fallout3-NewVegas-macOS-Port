@@ -16,7 +16,7 @@ While the Wine ecosystem has improved recently — with **Wine ARM64 + FEX** in 
 
 This port eliminates that entire stack at the root:
 * **No Rosetta 2 or FEX overhead:** game code is statically recompiled to **native ARM64**, with x87 arithmetic lowered to 64-bit `double` (53-bit precision, matching what the MSVC CRT configures on Windows).
-* **Lower RAM footprint:** running as a single native process without `wineserver`, a background Steam client, or extra translation layers saves significant memory — especially valuable on **8 GB unified-memory** Apple Silicon Macs.
+* **Lower RAM footprint:** running as a single native process without `wineserver` or x86 translation layers saves significant memory — especially valuable on **8 GB unified-memory** Apple Silicon Macs.
 * **Direct D3D9 → Metal:** D3D9 calls and SM 1–3 shaders compile directly to Metal (`d3d9_metal.m` and `sm2msl.c`).
 
 ---
@@ -31,41 +31,111 @@ This repository adapts **[FNV-iOS-Shim](https://github.com/arjuk95-dot/FNV-iOS-S
   * Retained `FNV-iOS-Shim` media and stability improvements: native PCM mixer (`FNVAudioMixer.c` + `AVAudioEngine`), Ogg/Vorbis decoding, DirectShow pull-source (`dshow.m`), native `AVFoundation` cutscene playback (`FNVNativeVideo.m`), and heap/texture/sync fixes.
 * **Restored Unicorn Engine fallback:**
   * `FNV-iOS-Shim` had removed Unicorn fallback execution due to iOS restrictions. This port restores `upstream/recomp/host/fallback.c` and links `libunicorn.a` to handle any uncompiled code paths or edge-case instructions.
-* **Precomputed symbol maps (`symbols/fnv/`):**
+* **Precomputed symbol maps (`symbols/fnv/` and `symbols/fnv-steam/`):**
   * The original iOS project shipped without symbol maps and required a full Ghidra auto-analysis (~40 minutes) even though it only targeted a single executable.
-  * Precomputed function and jump-table metadata in `symbols/fnv/` plus `tools/ghidra/ApplyMetadataAndDump.java` cut the Ghidra step down to **~1 min** P-code export + **~3 min** C emission. For other DRM-free executables, the full Ghidra pipeline (`FixNoReturn.java`, `ResolveJumpTables.java`, `FixEntries.java`, `DumpPcode.java`) remains available automatically as a fallback.
+  * Precomputed function and jump-table metadata for both the **GOG** (`symbols/fnv/`) and **Steam** (`symbols/fnv-steam/`) builds plus `tools/ghidra/ApplyMetadataAndDump.java` cut the Ghidra step down to **~1 min** P-code export + **~3 min** C emission. For other DRM-free executables, the full Ghidra pipeline (`FixNoReturn.java`, `ResolveJumpTables.java`, `FixEntries.java`, `DumpPcode.java`) remains available automatically as a fallback.
 * **One-command installer & packager (`quick-install.sh`):**
-  * Checks for SteamStub `.bind` DRM, verifies the executable SHA-256, installs missing Homebrew dependencies (`ghidra`, `unicorn`, `cmake`, `ffmpeg`), caches codecs/objects/translations under `~/Library/Caches/fnv-macos/`, moves game data into `Fallout New Vegas.app/Contents/Resources/GameData/`, converts `.bik` cutscenes to `.mp4` via `ffmpeg`, ad-hoc signs the bundle, and optionally wraps it in a `.dmg` (`--dmg`).
+  * Auto-detects game files across common locations (Steam, SteamCMD, DepotDownloader, GOG `innoextract`, `~/Downloads`, `~/Games`, or an existing `.app`), checks for SteamStub `.bind` DRM (offering to back up `FalloutNV.exe` to `FalloutNV.exe.og` and strip the DRM using official Steamless CLI + Mono on demand), verifies the executable SHA-256, installs missing Homebrew dependencies (`ghidra`, `unicorn`, `cmake`, `ffmpeg`, plus `mono` if needed), caches codecs/objects/translations under `~/Library/Caches/fnv-macos/`, moves game data into `Fallout New Vegas.app/Contents/Resources/GameData/`, converts `.bik` cutscenes to `.mp4` via `ffmpeg`, ad-hoc signs the bundle, and optionally wraps it in a `.dmg` (`--dmg`).
 * **Additional codebase changes:**
+  * **Optional Steamworks bridge & Overlay launcher (Steam builds only):** `upstream/recomp/host/shims_steam.c` loads Valve's official ARM64 `libsteam_api.dylib` (bundled only for Steam builds, omitted for GOG or `--no-steam`) to bridge `steam_api.dll` (`__thiscall` proxies for `ISteamUser`, `ISteamUtils`, `ISteamUserStats`, `ISteamApps`, and `ISteamFriends`, plus `SteamAPI_ManualDispatch_*` callbacks) for Steam achievements and status, with clean offline fallback. `macos/FNVSteamLauncher.c` starts the Mac Steam client silently (`-silent`), waits for global user login (`ConnectToGlobalUser`) before launching the game, and injects `gameoverlayrenderer.dylib` for the Metal Steam Overlay (`Shift+Tab`) and achievement notifications.
   * **User data outside the bundle (`FNV_USER_DIR`):** updates in `upstream/recomp/host/shims_files.c` and `shims_win.c` (`SHGetFolderPathA`) route `UserDocuments` (saves, `FALLOUT.INI`, `FalloutPrefs.ini`) to `~/Library/Application Support/FalloutNV/UserDocuments`, with logs in `~/Library/Logs/FalloutNV/fnv.log`.
   * **macOS 14+ Metal compatibility (`d3d9_metal.m`):** guarded `copts.mathMode = MTLMathModeSafe` with `@available(macOS 15.0, iOS 18.0, *)` so the port builds and runs cleanly on macOS 14 (Sonoma) and newer.
   * **Build & test suite updates (`tools/build.py`, `tools/app_icon.py`, `tests/`):** updated build scripts and native/host test suite for the macOS target.
 
 ---
 
-## Requirements & Supported Build
+## Requirements & Supported Builds
 
 * **Apple Silicon Mac (`arm64`)** running **macOS 14 (Sonoma)** or later.
 * **Xcode Command Line Tools** (`xcode-select --install`) and **Homebrew**.
-* **Your own DRM-free PC copy of *Fallout: New Vegas*:**
-  * **Tested build with precomputed symbols (GOG):**
+* **Your own PC copy of *Fallout: New Vegas*:**
+  * **GOG (precomputed symbols in `symbols/fnv/`):**
     * File: `FalloutNV.exe`
     * SHA-256: `89e7020487e80f20ddc92ea641c4433b2c6839a82f45a076e414d167d11dd0fe`
-  * **Epic Games Store:** since it is also DRM-free (no `.bind` section), it should work with static recompilation; however, if its SHA-256 differs from the GOG build above, `symbols/fnv/` will not match and `quick-install.sh` will fall back to full Ghidra analysis (slower, and may require address adjustments if the binary layout differs).
-  * **Steam:** Steam's `FalloutNV.exe` uses SteamStub DRM (`.bind` section) and cannot be statically recompiled, though your Steam `Data/` folder works fine with a compatible DRM-free executable.
+    * Builds launch `FalloutNewVegas` directly and completely standalone — no Steam launch, no Steam Overlay, and no `libsteam_api.dylib`.
+  * **Steam (precomputed symbols in `symbols/fnv-steam/`):**
+    * Original `FalloutNV.exe` (SteamStub v2.1 DRM): `3a87f92f011e5dc9179ddf733cf08be2b39ea6e5b7a8a9e3a9a72dafcc1b104d`
+    * Unpacked via Steamless CLI (`v3.1.0.5` + Mono): `19406942e48724d797300c4ea6be9ac69a32f670b8c35db09279a2258422739f`
+    * When `quick-install.sh` detects SteamStub DRM, it warns you and asks for confirmation (or pass `--unpack-drm`) to automatically install `mono` (via Homebrew if missing), download the official [Steamless](https://github.com/atom0s/Steamless) CLI release (`v3.1.0.5`, verified by SHA-256), back up the original file to `FalloutNV.exe.og`, strip the DRM, and compile using `symbols/fnv-steam/`.
+    * **Steam Achievements & Overlay:** for Steam builds, `quick-install.sh` also fetches Valve's official ARM64 `libsteam_api.dylib` (from Steamworks.NET 20.1.0, verified by SHA-256) into `Contents/Frameworks/` and bundles `FalloutNewVegasLauncher` so double-clicking `Fallout New Vegas.app` automatically starts the Mac Steam client (if installed) and enables achievements, Steam status, and the Steam Overlay (`Shift+Tab`). Pass `--no-steam` at build time to omit Steam integration, or set `FNV_STEAM_NO_OVERLAY=1` / `FNV_STEAM_DISABLE=1` at runtime.
+  * **Epic Games Store / other DRM-free builds:** if the SHA-256 differs from the GOG and Steam builds above, `quick-install.sh` automatically falls back to full Ghidra auto-analysis (slower, and unsupported builds may require address adjustments if the binary layout differs).
+
+---
+
+## Obtaining the Windows Game Files on macOS
+
+Because *Fallout: New Vegas* is a Windows-only release on Steam and GOG, you can fetch or extract the game files directly on your Mac using any of the methods below. All output paths shown here are auto-detected by `quick-install.sh`.
+
+### Option 1: Steam
+
+> **AppID note:** `22380` is the standard global edition; use `22490` instead if your Steam account owns the regional PCR edition.
+
+#### Method A — `steamcmd` (recommended)
+
+```sh
+brew install --cask steamcmd
+steamcmd +@sSteamCmdForcePlatformType windows \
+  +force_install_dir "$HOME/Downloads/Fallout New Vegas" \
+  +login <YOUR_STEAM_USERNAME> \
+  +app_update 22380 validate \
+  +quit
+```
+
+*Without `+force_install_dir`, `steamcmd` downloads into `~/Library/Application Support/Steam/steamapps/common/Fallout New Vegas` (or `~/Steam/steamapps/common/Fallout New Vegas`), both of which `quick-install.sh` auto-detects.*
+
+#### Method B — `DepotDownloader`
+
+```sh
+brew tap steamre/tools
+brew install depotdownloader
+depotdownloader -app 22380 -os windows -username <YOUR_STEAM_USERNAME> \
+  -dir "$HOME/Downloads/Fallout New Vegas"
+```
+
+*If you omit `-dir`, DepotDownloader places files under `./depots/22380/<manifest>/` (`~/depots/22380/` and `~/Downloads/depots/22380/` are also auto-detected).*
+
+#### Method C — Steam Client Console
+
+1. Open the hidden Console tab in the desktop Steam client:
+   ```sh
+   open "steam://open/console"
+   ```
+2. Download the base Windows depots (plus any DLC depots you own — check Depot IDs on SteamDB if needed):
+   ```text
+   download_depot 22380 22381
+   download_depot 22380 22382
+   ```
+3. Steam saves each depot separately under:
+   `~/Library/Application Support/Steam/steamapps/content/app_22380/depot_*/`
+   Merge the contents of those `depot_*` folders into `~/Downloads/Fallout New Vegas/` so `FalloutNV.exe` and `Data/` sit together in one folder.
+
+### Option 2: GOG Offline Installer (`innoextract`)
+
+If you downloaded the GOG offline backup installer (`setup_fallout_new_vegas_*.exe` and its `.bin` parts) to `~/Downloads/`:
+
+```sh
+brew install innoextract
+innoextract -d "$HOME/Downloads/Fallout New Vegas" ~/Downloads/setup_fallout_new_vegas_*.exe
+```
+
+`innoextract` extracts the game files into `~/Downloads/Fallout New Vegas/app/` (containing `FalloutNV.exe` and `Data/`), which `quick-install.sh` auto-detects directly.
 
 ---
 
 ## Quick Install
 
 ```sh
+# Auto-detect game files (Downloads, Steam, SteamCMD, DepotDownloader, innoextract)
+./quick-install.sh
+
+# Or pass an explicit path
 ./quick-install.sh "/path/to/Fallout New Vegas"
 ```
 
-To also wrap the app in a drag-to-Applications `.dmg`:
+To skip the confirmation prompt when stripping SteamStub DRM, or to wrap the app in a drag-to-Applications `.dmg`:
 
 ```sh
-./quick-install.sh --dmg "/path/to/Fallout New Vegas"
+./quick-install.sh --unpack-drm --dmg
 ```
 
 > **Note on disk usage:** to avoid duplicating ~10 GB on disk, `quick-install.sh` **moves** the game files from the source folder into `~/Applications/Fallout New Vegas.app/Contents/Resources/GameData/`. Translation and object caches are stored in `~/Library/Caches/fnv-macos/`.

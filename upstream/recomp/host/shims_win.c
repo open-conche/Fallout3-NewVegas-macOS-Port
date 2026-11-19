@@ -161,19 +161,6 @@ SHIM(CoCreateInstance) {
 // ---- winmm -------------------------------------------------------------------------------------
 SHIM(timeGetTime) { RET(c, (uint32_t)(clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000000ull), 0); }
 
-// ---- steam_api: report "Steam not running" so the game takes its offline path -------------------
-SHIM(SteamAPI_Init) { fprintf(stderr, "[host] SteamAPI_Init -> false (offline)\n"); RET(c, 0, 0); }
-SHIM(SteamAPI_IsSteamRunning) { RET(c, 0, 0); }
-SHIM(SteamAPI_Shutdown) { RET(c, 0, 0); }
-SHIM(SteamAPI_RunCallbacks) { RET(c, 0, 0); }
-SHIM(SteamAPI_RegisterCallback) { RET(c, 0, 0); }      // cdecl: caller pops
-SHIM(SteamAPI_UnregisterCallback) { RET(c, 0, 0); }
-SHIM(SteamUser) { RET(c, 0, 0); }
-SHIM(SteamFriends) { RET(c, 0, 0); }
-SHIM(SteamUserStats) { RET(c, 0, 0); }
-SHIM(SteamApps) { RET(c, 0, 0); }
-SHIM(SteamUtils) { RET(c, 0, 0); }
-
 SHIM_TABLE(win_shims,
     E(RegisterClassA) E(CreateWindowExA) E(DestroyWindow) E(ShowWindow) E(UpdateWindow) E(SetWindowPos)
     E(SetWindowTextA) E(GetWindowTextA) E(GetClassNameA) E(GetWindow) E(GetWindowLongA) E(GetClassLongA)
@@ -185,6 +172,4 @@ SHIM_TABLE(win_shims,
     E(InitCommonControlsEx) E(ImageList_LoadImageA) E(ImageList_Destroy) E(RegOpenKeyExA) E(RegCreateKeyExA)
     E(RegQueryValueExA) E(RegSetValueExA) E(RegCloseKey) E(GetUserNameA) E(SHGetFolderPathA) E(ShellExecuteA)
     E(CommandLineToArgvW) E(CoInitialize) E(CoInitializeEx) E(CoUninitialize) E(CoFreeUnusedLibraries)
-    E(CoTaskMemAlloc) E(CoTaskMemFree) E(CoCreateInstance) E(timeGetTime) E(SteamAPI_Init)
-    E(SteamAPI_IsSteamRunning) E(SteamAPI_Shutdown) E(SteamAPI_RunCallbacks) E(SteamAPI_RegisterCallback)
-    E(SteamAPI_UnregisterCallback) E(SteamUser) E(SteamFriends) E(SteamUserStats) E(SteamApps) E(SteamUtils))
+    E(CoTaskMemAlloc) E(CoTaskMemFree) E(CoCreateInstance) E(timeGetTime))

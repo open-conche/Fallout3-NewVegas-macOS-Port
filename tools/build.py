@@ -55,6 +55,8 @@ def main():
     p.add_argument('--codec-prefix', type=Path, help='verified pinned macOS Ogg/Vorbis static libraries')
     p.add_argument('--unicorn-prefix', type=Path, help='optional Unicorn engine prefix for fallback interpreter')
     p.add_argument('--no-unicorn', action='store_true', help='disable Unicorn fallback interpreter')
+    p.add_argument('--steam-api-dylib', type=Path, help='optional Valve ARM64 libsteam_api.dylib to bundle in Frameworks/')
+    p.add_argument('--steam-appid', default='22380', help='Steam AppID written to steam_appid.txt when bundling libsteam_api.dylib')
     p.add_argument('--no-call-trace', action='store_true', help='omit per-function diagnostic ring writes')
     p.add_argument('--version', default=os.environ.get('GITHUB_RUN_NUMBER', '1'), help='positive numeric app build version')
     args = p.parse_args()
@@ -180,12 +182,21 @@ def main():
         link_flags = ['-Wl,-stack_size,0x4000000']
         run(base + objects + libraries + [v for f in frameworks for v in ('-framework', f)] + link_flags + ['-o', str(macos_dir / exe_name)])
 
+        bundle_exe = exe_name
         if codec:
             shutil.copytree(codec / 'licenses', resources_dir / 'Licenses')
+        if not probe and args.steam_api_dylib and args.steam_api_dylib.is_file():
+            frameworks_dir = contents / 'Frameworks'
+            frameworks_dir.mkdir(exist_ok=True)
+            shutil.copy2(args.steam_api_dylib, frameworks_dir / 'libsteam_api.dylib')
+            (macos_dir / 'steam_appid.txt').write_text(str(args.steam_appid).strip() + '\n')
+            launcher_name = 'FalloutNewVegasLauncher'
+            run(base + ['-O2', '-Wall', '-Wextra', str(M / 'FNVSteamLauncher.c'), '-o', str(macos_dir / launcher_name)])
+            bundle_exe = launcher_name
 
         info = dict(
             CFBundleDevelopmentRegion='en',
-            CFBundleExecutable=exe_name,
+            CFBundleExecutable=bundle_exe,
             CFBundleName=app_name,
             CFBundleDisplayName=app_name,
             CFBundleIdentifier='dev.fnvmac.' + args.target,
