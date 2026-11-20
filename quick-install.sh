@@ -10,7 +10,7 @@
 #   --dmg            also wrap the app in "<App Name>.dmg"
 #   --keep-ghidra    keep the Ghidra project and P-code JSONL after translation
 #   --unpack-drm     unattended: allow downloading Steamless + Mono to strip SteamStub DRM
-#   --no-steam       keep FNV Steam builds in offline mode (skip Steam launcher, overlay & libsteam_api.dylib)
+#   --no-steam       keep Steam builds in offline mode (skip Steam launcher, overlay & libsteam_api.dylib)
 #   game_files_dir   optional folder containing FalloutNV.exe/Fallout3.exe and Data/
 #                    or an existing app bundle.
 set -euo pipefail
@@ -672,7 +672,15 @@ BUILD_OUT="$TMP/build"
 mkdir -p "$BUILD_OUT"
 
 STEAM_BUILD_ARGS=()
-if [ "$GAME_ID" = fnv ] && [ "$NO_STEAM" != yes ] && [ "$ACTUAL_SHA" != "$GOG_EXE_SHA256" ] && { [ "$ACTUAL_SHA" = "$STEAM_UNPACKED_EXE_SHA256" ] || [ -f "$ASSET_SRC/steam_api.dll" ]; }; then
+STEAM_GOG_SHA="$GOG_EXE_SHA256"
+STEAM_UNPACKED_SHA="$STEAM_UNPACKED_EXE_SHA256"
+STEAM_DEFAULT_APPID="22380"
+if [ "$GAME_ID" = fallout3 ]; then
+	STEAM_GOG_SHA="$F3_GOG_EXE_SHA256"
+	STEAM_UNPACKED_SHA="$F3_STEAM_EXE_SHA256"
+	STEAM_DEFAULT_APPID="22370"
+fi
+if [ "$NO_STEAM" != yes ] && [ "$ACTUAL_SHA" != "$STEAM_GOG_SHA" ] && { [ "$ACTUAL_SHA" = "$STEAM_UNPACKED_SHA" ] || [ -f "$ASSET_SRC/steam_api.dll" ]; }; then
 	SW_DIR="$CACHE_ROOT/steamworks/20.1.0"
 	SW_DYLIB="$SW_DIR/libsteam_api.dylib"
 	if [ ! -f "$SW_DYLIB" ]; then
@@ -705,9 +713,13 @@ if [ "$GAME_ID" = fnv ] && [ "$NO_STEAM" != yes ] && [ "$ACTUAL_SHA" != "$GOG_EX
 		ok "Using cached Valve libsteam_api.dylib"
 	fi
 	if [ -f "$SW_DYLIB" ]; then
-		STEAM_APPID="22380"
-		if [[ "$ASSET_SRC" == *"/22490/"* ]] || [ -f "$ASSET_SRC/../../appmanifest_22490.acf" ]; then
-			STEAM_APPID="22490"
+		STEAM_APPID="$STEAM_DEFAULT_APPID"
+		if [ "$GAME_ID" = fnv ]; then
+			if [[ "$ASSET_SRC" == *"/22490/"* ]] || [ -f "$ASSET_SRC/../../appmanifest_22490.acf" ]; then
+				STEAM_APPID="22490"
+			fi
+		elif [[ "$ASSET_SRC" == *"/22300/"* ]] || { [ ! -f "$ASSET_SRC/../../appmanifest_22370.acf" ] && [ -f "$ASSET_SRC/../../appmanifest_22300.acf" ]; }; then
+			STEAM_APPID="22300"
 		fi
 		STEAM_BUILD_ARGS=(--steam-api-dylib "$SW_DYLIB" --steam-appid "$STEAM_APPID")
 		ok "Bundling Steam launcher, Overlay hook & libsteam_api.dylib (AppID $STEAM_APPID)"

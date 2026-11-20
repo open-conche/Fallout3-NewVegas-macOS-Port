@@ -1,0 +1,2 @@
+# Verified non-returning CRT routines
+00d7c102 __CxxThrowException@8

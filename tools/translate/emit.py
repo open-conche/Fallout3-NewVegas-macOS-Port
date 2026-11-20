@@ -374,7 +374,14 @@ class FnEmitter:
             tgt = ins[0]
             cond = self.rd(ins[1]) if opc == "CBRANCH" else None
             if tgt[0] == "const":
-                rel = tgt[1] if tgt[1] < (1 << 63) else tgt[1] - (1 << 64)
+                # Intra-instruction branches (ENTER/REP p-code loops) carry a signed relative
+                # op-index offset in a narrow constant. Sign-extend from its declared width so
+                # a 4-byte -6 (0xFFFFFFFA) is not read as +4294967290.
+                rel = tgt[1]
+                width = tgt[2] if len(tgt) > 2 and tgt[2] > 0 else 8
+                bits = width * 8
+                if rel >= (1 << (bits - 1)):
+                    rel -= (1 << bits)
                 lab = self.plabel(a, idx + rel, len(insn["ops"]))
             else:
                 if tgt[1] not in self.addrs:
@@ -482,6 +489,9 @@ class FnEmitter:
         a = [self.rdU(v) for v in ins[1:]]
         simple = {
             "rdtsc": "(U)rt_rdtsc()",
+            # XGETBV reads XCR0. rt_cpuid advertises no OSXSAVE/AVX, so this is unreachable
+            # on the native path; report 0 rather than failing the whole function.
+            "xinuse": "0",
             "movmskps": f"MOVMSKPS({a[-1]})" if a else None,
             "minps": f"MINPS({a[0]},{a[1]})" if len(a) > 1 else None,
             "maxps": f"MAXPS({a[0]},{a[1]})" if len(a) > 1 else None,
@@ -744,14 +754,17 @@ def main():
         chunk.append(code)
     flush()
 
-    # a skipped function referenced directly would be an undefined symbol: give it a trap stub
+    # A skipped function referenced directly would be an undefined symbol. Route it through the
+    # Unicorn fallback instead of trapping: the host interprets the whole function with a real
+    # x86 decoder, which also recovers functions auto-analysis split at a wrong instruction
+    # boundary (e.g. the CRT ISA probe). Test hosts keep their trapping rt_fallback.
     emitted = {e for e, _ in ok}
     stubs = ['#include "rt.h"\n']
     if True:
         # anything declared callable but not emitted (skipped, or an extra entry that was not an
-        # instruction start in its function) traps instead of failing to link
+        # instruction start in its function) is interpreted rather than failing to link
         for e in sorted(FnEmitter.entries - emitted):
-            stubs.append(f"void g_{hx(e)}(CPU *c){{rt_trap(c,TRAP_UNSUPPORTED,0x{hx(e)}u);}}\n")
+            stubs.append(f"void g_{hx(e)}(CPU *c){{rt_fallback(c,0x{hx(e)}u);}}\n")
     write_if_changed(os.path.join(args.outdir, "stubs.c"), "".join(stubs))
     ok.sort()
     write_if_changed(os.path.join(args.outdir, "table.c"),

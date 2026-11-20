@@ -194,8 +194,11 @@ def main():
             frameworks_dir.mkdir(exist_ok=True)
             shutil.copy2(args.steam_api_dylib, frameworks_dir / 'libsteam_api.dylib')
             (macos_dir / 'steam_appid.txt').write_text(str(args.steam_appid).strip() + '\n')
-            launcher_name = 'FalloutNewVegasLauncher'
-            run(base + ['-O2', '-Wall', '-Wextra', str(M / 'FNVSteamLauncher.c'), '-o', str(macos_dir / launcher_name)])
+            launcher_name = exe_name + 'Launcher'
+            run(base + ['-O2', '-Wall', '-Wextra',
+                        '-DFNV_STEAM_GAME_NAME="' + exe_name + '"',
+                        '-DFNV_STEAM_DEFAULT_APPID="' + str(args.steam_appid).strip() + '"',
+                        str(M / 'FNVSteamLauncher.c'), '-o', str(macos_dir / launcher_name)])
             bundle_exe = launcher_name
 
         bundle_id_prefix = 'dev.f3mac.' if args.game == 'fallout3' else 'dev.fnvmac.'

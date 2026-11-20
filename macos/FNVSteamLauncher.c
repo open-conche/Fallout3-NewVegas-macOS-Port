@@ -2,7 +2,13 @@
 // Starts the Mac Steam client silently if installed and not already running,
 // waits until the Steam global user IPC is ready, configures SteamAppId /
 // SteamGameId / SteamOverlayGameId and DYLD_INSERT_LIBRARIES for Valve's
-// gameoverlayrenderer.dylib, then execv's FalloutNewVegas.
+// gameoverlayrenderer.dylib, then execv's the game binary.
+#ifndef FNV_STEAM_GAME_NAME
+#define FNV_STEAM_GAME_NAME "FalloutNewVegas"
+#endif
+#ifndef FNV_STEAM_DEFAULT_APPID
+#define FNV_STEAM_DEFAULT_APPID "22380"
+#endif
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -74,7 +80,7 @@ static void read_appid(const char *dir, char *out, size_t n) {
             if (out[0]) return;
         }
     }
-    snprintf(out, n, "22380");
+    snprintf(out, n, "%s", FNV_STEAM_DEFAULT_APPID);
 }
 
 static void wait_for_steam_user(const char *dir, const char *home, int just_started) {
@@ -206,8 +212,8 @@ int main(int argc, char **argv) {
     *slash = 0;
 
     char target[PATH_MAX];
-    if (snprintf(target, sizeof(target), "%s/FalloutNewVegas", real) >= (int)sizeof(target)) {
-        fprintf(stderr, "FalloutNewVegas path too long\n");
+    if (snprintf(target, sizeof(target), "%s/%s", real, FNV_STEAM_GAME_NAME) >= (int)sizeof(target)) {
+        fprintf(stderr, "%s path too long\n", FNV_STEAM_GAME_NAME);
         return 127;
     }
 
