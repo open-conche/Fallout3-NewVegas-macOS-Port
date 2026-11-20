@@ -141,6 +141,10 @@ SHIM(CreateEventA) {
     Obj *o = obj_new(); o->manual = (int)ARG(c, 1); o->signaled = (int)ARG(c, 2);
     RET(c, handle_new(H_EVENT, o), 4);
 }
+SHIM(CreateEventW) {
+    Obj *o = obj_new(); o->manual = (int)ARG(c, 1); o->signaled = (int)ARG(c, 2);
+    RET(c, handle_new(H_EVENT, o), 4);
+}
 SHIM(SetEvent) {
     Obj *o = handle_get(ARG(c, 0), H_EVENT);
     if (o) { pthread_mutex_lock(&o->m); o->signaled = 1; pthread_cond_broadcast(&o->cv); pthread_mutex_unlock(&o->m); }
@@ -173,6 +177,13 @@ SHIM(WaitForSingleObject) {
     uint32_t result=wait_one(h,ms);
     if(ms)diagnostic_state(c,"wait-returned",h);
     RET(c,result,2);
+}
+SHIM(WaitForSingleObjectEx) {
+    uint32_t h=ARG(c,0),ms=ARG(c,1);
+    if(ms)diagnostic_state(c,"wait-one",h);
+    uint32_t result=wait_one(h,ms);
+    if(ms)diagnostic_state(c,"wait-returned",h);
+    RET(c,result,3);
 }
 SHIM(WaitForMultipleObjects) {
     uint32_t n = ARG(c, 0), arr = ARG(c, 1), all = ARG(c, 2), ms = ARG(c, 3);
@@ -228,6 +239,8 @@ static pthread_mutex_t *cs_get(uint32_t a) {
 }
 SHIM(InitializeCriticalSection) { memset(MEM + ARG(c, 0), 0, 24); cs_get(ARG(c, 0)); RET(c, 0, 1); }
 SHIM(InitializeCriticalSectionAndSpinCount) { memset(MEM + ARG(c, 0), 0, 24); cs_get(ARG(c, 0)); RET(c, 1, 2); }
+SHIM(InitializeCriticalSectionEx) { memset(MEM + ARG(c, 0), 0, 24); cs_get(ARG(c, 0)); RET(c, 1, 3); }
+SHIM(InitializeSListHead) { memset(MEM + ARG(c, 0), 0, 8); RET(c, 0, 1); }
 SHIM(DeleteCriticalSection) { RET(c, 0, 1); }
 SHIM(EnterCriticalSection) {
     uint32_t address=ARG(c,0);pthread_mutex_t *mutex=cs_get(address);
@@ -355,9 +368,10 @@ SHIM(CloseHandle) {
 }
 
 SHIM_TABLE(sync_shims,
-    E(CreateEventA) E(SetEvent) E(ResetEvent) E(CreateSemaphoreA) E(ReleaseSemaphore) E(CreateMutexA)
-    E(WaitForSingleObject) E(WaitForMultipleObjects) E(InitializeCriticalSection)
-    E(InitializeCriticalSectionAndSpinCount) E(DeleteCriticalSection) E(EnterCriticalSection)
+    E(CreateEventA) E(CreateEventW) E(SetEvent) E(ResetEvent) E(CreateSemaphoreA) E(ReleaseSemaphore) E(CreateMutexA)
+    E(WaitForSingleObject) E(WaitForSingleObjectEx) E(WaitForMultipleObjects) E(InitializeCriticalSection)
+    E(InitializeCriticalSectionAndSpinCount) E(InitializeCriticalSectionEx) E(InitializeSListHead)
+    E(DeleteCriticalSection) E(EnterCriticalSection)
     E(LeaveCriticalSection) E(TryEnterCriticalSection) E(InterlockedIncrement) E(InterlockedDecrement)
     E(InterlockedExchange) E(InterlockedExchangeAdd) E(InterlockedCompareExchange) E(CreateThread)
     E(ResumeThread) E(SuspendThread) E(SetThreadPriority) E(SetThreadIdealProcessor) E(GetExitCodeThread)

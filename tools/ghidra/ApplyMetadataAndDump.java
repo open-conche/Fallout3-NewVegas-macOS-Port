@@ -18,6 +18,8 @@ import ghidra.program.model.symbol.*;
 
 public class ApplyMetadataAndDump extends GhidraScript {
 
+    private final Set<Long> noReturn = new HashSet<>();
+
     private String vn(Varnode v) {
         if (v == null) return "null";
         String sp = v.getAddress().getAddressSpace().getName();
@@ -40,7 +42,11 @@ public class ApplyMetadataAndDump extends GhidraScript {
             FlowType ft = in.getFlowType();
             Address next = in.getMaxAddress().next();
             if (ft.isCall()) {
-                if (next != null) work.add(next);
+                boolean ret = true;
+                for (Address t : in.getFlows()) {
+                    if (noReturn.contains(t.getOffset())) { ret = false; break; }
+                }
+                if (ret && next != null) work.add(next);
                 continue;
             }
             if (ft.isJump()) {
@@ -104,6 +110,22 @@ public class ApplyMetadataAndDump extends GhidraScript {
                         seeds.add(toAddr(t));
                     }
                     jtables.add(row);
+                }
+            }
+        }
+
+        noReturn.clear();
+        File nrFile = new File(symDir, "noreturn.txt");
+        if (nrFile.isFile()) {
+            try (BufferedReader br = Files.newBufferedReader(nrFile.toPath())) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    int hash = line.indexOf('#');
+                    if (hash >= 0) line = line.substring(0, hash);
+                    line = line.trim();
+                    if (line.isEmpty()) continue;
+                    String tok = line.split("\\s+")[0];
+                    noReturn.add(Long.parseUnsignedLong(tok, 16));
                 }
             }
         }

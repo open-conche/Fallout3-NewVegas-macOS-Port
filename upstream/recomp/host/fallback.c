@@ -114,7 +114,7 @@ static void log_root(uint32_t a) {
 }
 
 void rt_fallback(CPU *c, uint32_t a) {
-    if (a < 0x401000 || a >= 0x1000000 || depth >= MAXDEPTH) rt_trap(c, TRAP_NOFN, a);
+    if (a < host_text_start || a >= host_text_end || depth >= MAXDEPTH) rt_trap(c, TRAP_NOFN, a);
     log_root(a);
     uc_engine *uc = engine(c);
     cur_cpu[depth] = c; cur_root[depth] = a; prev_end[depth] = 0;

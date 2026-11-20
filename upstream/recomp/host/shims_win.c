@@ -114,12 +114,25 @@ SHIM(RegSetValueExA) { RET(c, 0, 6); }
 SHIM(RegCloseKey) { RET(c, 0, 1); }
 SHIM(GetUserNameA) { const char *u = "Player"; strcpy((char *)MEM + ARG(c, 0), u); P32(ARG(c, 1), 7); RET(c, 1, 2); }
 
+const char *host_game_dir(void);
+
 // ---- shell32: special folders live under FNV_USER_DIR (or UserDocuments) -------------------------
 SHIM(SHGetFolderPathA) {
-    const char *p = "C:\\Games\\FalloutNV\\UserDocuments";
+    uint32_t csidl = ARG(c, 1) & 0xFFu;
+    const char *gd = host_game_dir();
     const char *ud = getenv("FNV_USER_DIR");
-    mkdir(ud && ud[0] ? ud : "UserDocuments", 0755);
-    strcpy((char *)MEM + ARG(c, 4), p);
+    const char *base = (ud && ud[0]) ? ud : "UserDocuments";
+    mkdir(base, 0755);
+    if ((csidl == 0x1c || csidl == 0x1a) && strcmp(gd, "Fallout3") == 0) {
+        char local_dir[1024];
+        snprintf(local_dir, sizeof local_dir, "%s/LocalAppData", base);
+        mkdir(local_dir, 0755);
+        strcpy((char *)MEM + ARG(c, 4), "C:\\Games\\Fallout3\\UserDocuments\\LocalAppData");
+    } else {
+        char p[256];
+        snprintf(p, sizeof p, "C:\\Games\\%s\\UserDocuments", gd);
+        strcpy((char *)MEM + ARG(c, 4), p);
+    }
     RET(c, 0, 5);
 }
 // Nothing external is launched (e.g. FalloutNVLauncher.exe). FNV tests the result for != 0, not the

@@ -1,0 +1,5 @@
+# Verified non-returning CRT routines in GOG Fallout3.exe 1.7.0.3
+00c01e9b __CxxThrowException@8
+00c068c7 ___crtExitProcess
+00c0ad65 _abort
+00c0c5cc ___report_gsfailure

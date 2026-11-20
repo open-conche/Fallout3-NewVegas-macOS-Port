@@ -14,6 +14,24 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#ifdef FNV_GAME_FALLOUT3
+#define GAME_TITLE @"Fallout 3"
+#define GAME_EXE   @"Fallout3.exe"
+#define GAME_ESM   @"Data/Fallout3.esm"
+#define GAME_DIR   @"Fallout3"
+#define GAME_LOG   @"fallout3.log"
+#define GAME_ARGV0 "f3-macos"
+#define GAME_EXE_C "Fallout3.exe"
+#else
+#define GAME_TITLE @"Fallout: New Vegas"
+#define GAME_EXE   @"FalloutNV.exe"
+#define GAME_ESM   @"Data/FalloutNV.esm"
+#define GAME_DIR   @"FalloutNV"
+#define GAME_LOG   @"fnv.log"
+#define GAME_ARGV0 "fnv-macos"
+#define GAME_EXE_C "FalloutNV.exe"
+#endif
+
 @interface FNVMetalView : NSView
 @end
 @implementation FNVMetalView
@@ -120,7 +138,7 @@ static NSString *exeHash(NSURL *url) {
     [bar addItem:appMenuItem];
 
     NSMenu *appMenu = [NSMenu new];
-    NSString *title = @"Fallout: New Vegas";
+    NSString *title = GAME_TITLE;
     [appMenu addItemWithTitle:[@"About " stringByAppendingString:title]
                        action:@selector(orderFrontStandardAboutPanel:)
                 keyEquivalent:@""];
@@ -280,7 +298,7 @@ static NSString *exeHash(NSURL *url) {
                                               styleMask:style
                                                 backing:NSBackingStoreBuffered
                                                   defer:NO];
-    self.window.title = @"Fallout: New Vegas";
+    self.window.title = GAME_TITLE;
     self.window.delegate = self;
     self.window.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary;
     self.window.backgroundColor = NSColor.blackColor;
@@ -352,9 +370,9 @@ static NSString *exeHash(NSURL *url) {
 
     NSFileManager *fm = NSFileManager.defaultManager;
     NSURL *libURL = [fm URLsForDirectory:NSLibraryDirectory inDomains:NSUserDomainMask].firstObject;
-    NSURL *logDir = [libURL URLByAppendingPathComponent:@"Logs/FalloutNV" isDirectory:YES];
+    NSURL *logDir = [libURL URLByAppendingPathComponent:[@"Logs/" stringByAppendingString:GAME_DIR] isDirectory:YES];
     [fm createDirectoryAtURL:logDir withIntermediateDirectories:YES attributes:nil error:NULL];
-    NSURL *logURL = [logDir URLByAppendingPathComponent:@"fnv.log"];
+    NSURL *logURL = [logDir URLByAppendingPathComponent:GAME_LOG];
     if (!getenv("FNV_STDERR") && !isatty(STDERR_FILENO)) {
         freopen(logURL.fileSystemRepresentation, "w", stderr);
         setvbuf(stderr, NULL, _IONBF, 0);
@@ -368,7 +386,7 @@ static NSString *exeHash(NSURL *url) {
     [self showStatus:@"Input / Metal Probe — Move mouse for R/G, W/S or controller for Blue. Cmd+Q to quit."];
 #else
     NSURL *appSupport = [fm URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
-    NSURL *userDir = [appSupport URLByAppendingPathComponent:@"FalloutNV/UserDocuments" isDirectory:YES];
+    NSURL *userDir = [appSupport URLByAppendingPathComponent:[GAME_DIR stringByAppendingString:@"/UserDocuments"] isDirectory:YES];
     [fm createDirectoryAtURL:userDir withIntermediateDirectories:YES attributes:nil error:NULL];
     setenv("FNV_USER_DIR", userDir.fileSystemRepresentation, 1);
 
@@ -378,18 +396,18 @@ static NSString *exeHash(NSURL *url) {
         root = [NSURL fileURLWithPath:@(envRoot) isDirectory:YES];
     } else {
         NSURL *bundleGameData = [NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"GameData" isDirectory:YES];
-        if ([fm fileExistsAtPath:[bundleGameData URLByAppendingPathComponent:@"Data/FalloutNV.esm"].path] &&
-            [fm fileExistsAtPath:[bundleGameData URLByAppendingPathComponent:@"FalloutNV.exe"].path]) {
+        if ([fm fileExistsAtPath:[bundleGameData URLByAppendingPathComponent:GAME_ESM].path] &&
+            [fm fileExistsAtPath:[bundleGameData URLByAppendingPathComponent:GAME_EXE].path]) {
             root = bundleGameData;
         } else {
             root = [NSURL fileURLWithPath:fm.currentDirectoryPath isDirectory:YES];
         }
     }
 
-    NSURL *exe = [root URLByAppendingPathComponent:@"FalloutNV.exe"];
-    if (![fm fileExistsAtPath:[root URLByAppendingPathComponent:@"Data/FalloutNV.esm"].path] ||
+    NSURL *exe = [root URLByAppendingPathComponent:GAME_EXE];
+    if (![fm fileExistsAtPath:[root URLByAppendingPathComponent:GAME_ESM].path] ||
         ![fm fileExistsAtPath:exe.path]) {
-        [self showStatus:[NSString stringWithFormat:@"Missing game files. Expected FalloutNV.exe and Data/FalloutNV.esm in:\n%@", root.path]];
+        [self showStatus:[NSString stringWithFormat:@"Missing game files. Expected %@ and %@ in:\n%@", GAME_EXE, GAME_ESM, root.path]];
         return;
     }
     if (chdir(root.fileSystemRepresentation)) {
@@ -399,15 +417,36 @@ static NSString *exeHash(NSURL *url) {
 
     NSString *expected = [NSBundle.mainBundle objectForInfoDictionaryKey:@"FNVExecutableSHA256"];
     if (expected.length > 0 && ![expected isEqualToString:exeHash(exe)]) {
-        [self showStatus:@"FalloutNV.exe does not match this build."];
+        [self showStatus:[NSString stringWithFormat:@"%@ does not match this build.", GAME_EXE]];
         return;
     }
 
     setenv("FNV_ROOT", root.fileSystemRepresentation, 1);
     setenv("FNV_FALLBACK_LOG", [logDir URLByAppendingPathComponent:@"fallback_entries.txt"].fileSystemRepresentation, 1);
 
+#ifdef FNV_GAME_FALLOUT3
+    NSString *localAppDir = [userDir.path stringByAppendingPathComponent:@"LocalAppData/Fallout3"];
+    [fm createDirectoryAtPath:localAppDir withIntermediateDirectories:YES attributes:nil error:NULL];
+    NSString *pluginsPath = [localAppDir stringByAppendingPathComponent:@"plugins.txt"];
+    if (![fm fileExistsAtPath:pluginsPath]) {
+        NSMutableArray<NSString *> *plugins = [NSMutableArray arrayWithObject:@"Fallout3.esm"];
+        NSString *dlcListPath = [root.path stringByAppendingPathComponent:@"Data/DLCList.txt"];
+        NSString *dlcList = [NSString stringWithContentsOfFile:dlcListPath encoding:NSUTF8StringEncoding error:NULL];
+        if (dlcList) {
+            for (NSString *raw in [dlcList componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
+                NSString *esm = [raw stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+                if (esm.length > 0 && ![plugins containsObject:esm] &&
+                    [fm fileExistsAtPath:[root.path stringByAppendingPathComponent:[@"Data" stringByAppendingPathComponent:esm]]]) {
+                    [plugins addObject:esm];
+                }
+            }
+        }
+        [[plugins componentsJoinedByString:@"\r\n"] writeToFile:pluginsPath atomically:YES encoding:NSISOLatin1StringEncoding error:NULL];
+    }
+#endif
+
     // Update display/controller keys in FalloutPrefs.ini while preserving all other user settings.
-    NSString *myGamesDir = [userDir.path stringByAppendingPathComponent:@"My Games/FalloutNV"];
+    NSString *myGamesDir = [userDir.path stringByAppendingPathComponent:[@"My Games/" stringByAppendingString:GAME_DIR]];
     NSString *prefs = [myGamesDir stringByAppendingPathComponent:@"FalloutPrefs.ini"];
     for (NSString *leaf in [fm contentsOfDirectoryAtPath:myGamesDir error:NULL]) {
         if ([leaf caseInsensitiveCompare:@"FalloutPrefs.ini"] == NSOrderedSame) {
@@ -485,7 +524,7 @@ static NSString *exeHash(NSURL *url) {
             int rc = fnv_probe(0);
 #else
             extern int fnv_run_game(int, char **);
-            char *argv[] = {"fnv-macos", "FalloutNV.exe", NULL};
+            char *argv[] = {GAME_ARGV0, GAME_EXE_C, NULL};
             int rc = fnv_run_game(2, argv);
 #endif
             __block NSString *failureDetail = nil;

@@ -15,10 +15,24 @@ _Thread_local uint32_t host_last_error;
 static uint32_t cmdline_a, cmdline_w;
 static uint32_t teb_main;
 
+static char g_exe_name[128] = "FalloutNV.exe";
+static char g_game_dir[64] = "FalloutNV";
+
+const char *host_exe_name(void) { return g_exe_name; }
+const char *host_game_dir(void) { return g_game_dir; }
+
 void host_init_args(int argc, char **argv) {
-    char buf[4096] = "FalloutNV.exe";
+    if (argc > 0 && argv[0] && argv[0][0]) {
+        const char *slash = strrchr(argv[0], '/');
+        const char *bslash = strrchr(argv[0], '\\');
+        const char *base = slash > bslash ? slash + 1 : (bslash ? bslash + 1 : argv[0]);
+        snprintf(g_exe_name, sizeof g_exe_name, "%s", base);
+        snprintf(g_game_dir, sizeof g_game_dir, "%s",
+                 strcasecmp(g_exe_name, "Fallout3.exe") == 0 ? "Fallout3" : "FalloutNV");
+    }
+    char buf[4096];
+    snprintf(buf, sizeof buf, "%s", g_exe_name);
     for (int i = 1; i < argc; i++) { strncat(buf, " ", sizeof buf - strlen(buf) - 1); strncat(buf, argv[i], sizeof buf - strlen(buf) - 1); }
-    (void)argc;
     // allocated lazily (heap needs MEM); stash in a static until first use
     static char saved[4096];
     memcpy(saved, buf, sizeof saved);
@@ -73,8 +87,8 @@ SHIM(GetCommandLineW_) {
 // ---- modules: system DLLs get fake handles; GetProcAddress hands out dynamic import thunks ----
 #define MOD_BASE 0xFD000000u
 static const char *known_mods[] = {"kernel32", "user32", "gdi32", "advapi32", "shell32", "ole32",
-    "ntdll", "d3d9", "dinput8", "dsound", "xinput1_3", "winmm", "comctl32", "wsock32", "d3dx9_38",
-    "binkw32", "libvorbisfile", "steam_api", "shlwapi", "version", "mscoree", "msvcrt"};
+    "ntdll", "d3d9", "dinput8", "dsound", "xinput1_3", "winmm", "comctl32", "wsock32", "d3dx9_38", "d3dx9_42",
+    "binkw32", "libvorbisfile", "steam_api", "xlive", "shlwapi", "version", "mscoree", "msvcrt"};
 #define NMODS (sizeof known_mods / sizeof *known_mods)
 
 static uint32_t mod_handle(const char *name) {
@@ -84,7 +98,7 @@ static uint32_t mod_handle(const char *name) {
         low[n++] = (char)(*p >= 'A' && *p <= 'Z' ? *p + 32 : *p);
     low[n] = 0;
     char *dot = strstr(low, ".dll"); if (dot) *dot = 0;
-    if (!strcmp(low, "falloutnv")) return host_image_base;
+    if (!strcmp(low, "falloutnv") || !strcmp(low, "fallout3")) return host_image_base;
     for (size_t i = 0; i < NMODS; i++) if (!strcmp(low, known_mods[i])) return MOD_BASE + 0x10000u * (uint32_t)i;
     return 0;
 }
@@ -109,6 +123,21 @@ SHIM(LoadLibraryW_) {
     fprintf(stderr, "[host] LoadLibraryW(%s) -> %#x\n", nm, h);
     if (!h) last_error = 126; RET(c, h, 1);
 }
+SHIM(LoadLibraryExW_) {
+    char nm[256]; wide_to_ascii(ARG(c, 0), nm, sizeof nm); uint32_t h = mod_handle(nm);
+    fprintf(stderr, "[host] LoadLibraryExW(%s) -> %#x\n", nm, h);
+    if (!h) last_error = 126; RET(c, h, 3);
+}
+SHIM(GetModuleHandleExW_) {
+    uint32_t fl = ARG(c, 0), name = ARG(c, 1), out = ARG(c, 2);
+    uint32_t h = 0;
+    if (fl & 4u) h = host_image_base;
+    else if (!name) h = host_image_base;
+    else { char nm[256]; wide_to_ascii(name, nm, sizeof nm); h = mod_handle(nm); }
+    if (out) P32(out, h);
+    if (!h) last_error = 126;
+    RET(c, h != 0, 3);
+}
 SHIM(FreeLibrary_) { RET(c, 1, 1); }
 SHIM(GetProcAddress_) {
     uint32_t h = ARG(c, 0), pn = ARG(c, 1);
@@ -125,12 +154,42 @@ SHIM(GetProcAddress_) {
 }
 SHIM(GetModuleFileNameA_) {
     uint32_t buf = ARG(c, 1), n = ARG(c, 2);
-    const char *name = "C:\\Games\\FalloutNV\\FalloutNV.exe";
+    char name[256];
+    snprintf(name, sizeof name, "C:\\Games\\%s\\%s", g_game_dir, g_exe_name);
     uint32_t l = (uint32_t)strlen(name);
-    if (l >= n) l = n - 1;
-    memcpy(MEM + buf, name, l); MEM[buf + l] = 0;
+    if (n) { if (l >= n) l = n - 1; memcpy(MEM + buf, name, l); MEM[buf + l] = 0; }
     RET(c, l, 3);
 }
+SHIM(GetModuleFileNameW_) {
+    uint32_t buf = ARG(c, 1), n = ARG(c, 2);
+    char name[256];
+    snprintf(name, sizeof name, "C:\\Games\\%s\\%s", g_game_dir, g_exe_name);
+    uint32_t l = (uint32_t)strlen(name);
+    if (n) {
+        if (l >= n) l = n - 1;
+        for (uint32_t i = 0; i <= l; i++) { uint16_t ch = i < l ? (uint8_t)name[i] : 0; memcpy(MEM + buf + 2 * i, &ch, 2); }
+    }
+    RET(c, l, 3);
+}
+SHIM(GetSystemDirectoryW_) {
+    uint32_t buf = ARG(c, 0), n = ARG(c, 1);
+    const char *sys = "C:\\Windows\\System32";
+    uint32_t l = (uint32_t)strlen(sys);
+    if (n > l) {
+        for (uint32_t i = 0; i <= l; i++) { uint16_t ch = i < l ? (uint8_t)sys[i] : 0; memcpy(MEM + buf + 2 * i, &ch, 2); }
+        RET(c, l, 2);
+    } else RET(c, l + 1, 2);
+}
+SHIM(LocalAlloc_) {
+    uint32_t fl = ARG(c, 0), n = ARG(c, 1);
+    uint32_t p = gmalloc(n ? n : 1);
+    if (p && (fl & 0x40u)) memset(MEM + p, 0, n ? n : 1);
+    RET(c, p, 2);
+}
+SHIM(VerifyVersionInfoW_) { RET(c, 1, 3); }
+SHIM(VerSetConditionMask_) { SETREG(c, R_EDX, 0); RET(c, 0, 4); }
+SHIM(CreateProcessA_) { last_error = 2; RET(c, 0, 10); }
+SHIM(CreateProcessW_) { last_error = 2; RET(c, 0, 10); }
 SHIM(GetCurrentProcess_) { RET(c, 0xFFFFFFFFu, 0); }
 SHIM(GetCurrentThread_) { RET(c, 0xFFFFFFFEu, 0); }
 SHIM(GetCurrentProcessId_) { RET(c, (uint32_t)getpid(), 0); }
@@ -218,6 +277,7 @@ SHIM(GetOEMCP_) { RET(c, 437, 0); }
 SHIM(GetCPInfo_) { uint32_t p = ARG(c, 1); memset(MEM + p, 0, 20); P32(p, 1); MEM[p + 4] = '?'; RET(c, 1, 2); }
 SHIM(IsValidCodePage_) { RET(c, 1, 1); }
 SHIM(GetStartupInfoA_) { uint32_t p = ARG(c, 0); memset(MEM + p, 0, 68); P32(p, 68); RET(c, 0, 1); }
+SHIM(GetStartupInfoW_) { uint32_t p = ARG(c, 0); memset(MEM + p, 0, 68); P32(p, 68); RET(c, 0, 1); }
 SHIM(GetStdHandle_) { RET(c, 0x10 + (ARG(c, 0) & 3), 1); }
 SHIM(GetFileType_) { RET(c, 2, 1); }                      // FILE_TYPE_CHAR
 SHIM(SetHandleCount_) { RET(c, ARG(c, 0), 1); }
@@ -225,6 +285,7 @@ SHIM(SetUnhandledExceptionFilter_) { RET(c, 0, 1); }
 SHIM(UnhandledExceptionFilter_) { RET(c, 0, 1); }
 SHIM(SetConsoleCtrlHandler_) { RET(c, 1, 2); }
 SHIM(OutputDebugStringA_) { fprintf(stderr, "[guest] %s", GSTR(ARG(c, 0))); RET(c, 0, 1); }
+SHIM(OutputDebugStringW_) { char s[512]; wide_to_ascii(ARG(c, 0), s, sizeof s); fprintf(stderr, "[guest] %s", s); RET(c, 0, 1); }
 SHIM(EncodePointer_) { RET(c, ARG(c, 0), 1); }
 SHIM(DecodePointer_) { RET(c, ARG(c, 0), 1); }
 SHIM(Sleep_) {
@@ -248,7 +309,7 @@ SHIM(ExitProcess_) {
     uint32_t sp = REG(c, R_ESP);
     for (int i = 0, shown = 0; i < 4096 && shown < 40; i++) {
         uint32_t v = G32(sp + 4 * (uint32_t)i);
-        if (v >= 0x401000 && v < 0xfdf000) { fprintf(stderr, "  [esp+%#x] %#x\n", 4 * i, v); shown++; }
+        if (v >= 0x401000 && v < 0x1200000) { fprintf(stderr, "  [esp+%#x] %#x\n", 4 * i, v); shown++; }
     }
     exit((int)ARG(c, 0));
 }
@@ -257,21 +318,24 @@ typedef struct { const char *name; ShimFn fn; } Shim;
 static const Shim kernel32[] = {
 #define E(n) { #n, n##_ },
     E(GetLastError) E(SetLastError) E(GetVersion) E(GetVersionExA) E(GetCommandLineA) E(GetCommandLineW)
-    E(GetModuleHandleA) E(GetModuleHandleW) E(GetModuleFileNameA) E(LoadLibraryA) E(LoadLibraryW)
+    E(GetModuleHandleA) E(GetModuleHandleW) E(GetModuleHandleExW) E(GetModuleFileNameA) E(GetModuleFileNameW)
+    E(GetSystemDirectoryW) E(LoadLibraryA) E(LoadLibraryW) E(LoadLibraryExW)
     E(FreeLibrary) E(GetProcAddress) E(GetCurrentProcess) E(GetCurrentThread)
     E(GetCurrentProcessId) E(GetCurrentThreadId) E(GetTickCount) E(QueryPerformanceCounter)
     E(QueryPerformanceFrequency) E(GetSystemTimeAsFileTime) E(IsProcessorFeaturePresent) E(IsDebuggerPresent)
-    E(HeapCreate) E(GetProcessHeap) E(HeapDestroy) E(HeapAlloc) E(HeapFree) E(HeapReAlloc) E(HeapSize)
+    E(HeapCreate) E(GetProcessHeap) E(HeapDestroy) E(HeapAlloc) E(HeapFree) E(HeapReAlloc) E(HeapSize) E(LocalAlloc)
     E(VirtualAlloc) E(VirtualFree) E(VirtualQuery) E(TlsAlloc) E(TlsFree) E(TlsGetValue) E(TlsSetValue)
     E(GetEnvironmentStringsW) E(GetEnvironmentStrings) E(FreeEnvironmentStringsW) E(FreeEnvironmentStringsA)
-    E(GetACP) E(GetOEMCP) E(GetCPInfo) E(IsValidCodePage) E(GetStartupInfoA) E(GetStdHandle) E(GetFileType)
-    E(SetHandleCount) E(SetUnhandledExceptionFilter) E(UnhandledExceptionFilter) E(SetConsoleCtrlHandler)
-    E(OutputDebugStringA) E(Sleep) E(ExitProcess) E(EncodePointer) E(DecodePointer)
+    E(GetACP) E(GetOEMCP) E(GetCPInfo) E(IsValidCodePage) E(GetStartupInfoA) E(GetStartupInfoW)
+    E(GetStdHandle) E(GetFileType) E(SetHandleCount) E(SetUnhandledExceptionFilter)
+    E(UnhandledExceptionFilter) E(SetConsoleCtrlHandler) E(OutputDebugStringA) E(OutputDebugStringW)
+    E(Sleep) E(ExitProcess) E(EncodePointer) E(DecodePointer)
+    E(VerifyVersionInfoW) E(VerSetConditionMask) E(CreateProcessA) E(CreateProcessW)
 #undef E
 };
 
 typedef struct { const Shim *list; int count; } ShimTable;
-extern const ShimTable sync_shims, file_shims, text_shims, win_shims, steam_shims, dinput_shims, dsound_shims, d3d9_shims, d3dx_shims, xinput_shims, media_shims, mmio_shims;
+extern const ShimTable sync_shims, file_shims, text_shims, win_shims, steam_shims, xlive_shims, wsock_shims, dinput_shims, dsound_shims, d3d9_shims, d3dx_shims, xinput_shims, media_shims, mmio_shims;
 ShimFn host_find_shim(const char *dll, const char *name) {
     // ordinal imports collide across DLLs: look them up as "<dll basename, lowercase>#<n>"
     char key[160];
@@ -284,7 +348,7 @@ ShimFn host_find_shim(const char *dll, const char *name) {
     }
     for (size_t i = 0; i < sizeof kernel32 / sizeof *kernel32; i++)
         if (!strcmp(kernel32[i].name, name)) return kernel32[i].fn;
-    const ShimTable *tabs[] = {&sync_shims, &file_shims, &text_shims, &win_shims, &steam_shims, &dinput_shims, &dsound_shims, &d3d9_shims, &d3dx_shims, &xinput_shims, &media_shims, &mmio_shims};
+    const ShimTable *tabs[] = {&sync_shims, &file_shims, &text_shims, &win_shims, &steam_shims, &xlive_shims, &wsock_shims, &dinput_shims, &dsound_shims, &d3d9_shims, &d3dx_shims, &xinput_shims, &media_shims, &mmio_shims};
     for (size_t t = 0; t < sizeof tabs / sizeof *tabs; t++)
         for (int i = 0; i < tabs[t]->count; i++)
             if (!strcmp(tabs[t]->list[i].name, name)) return tabs[t]->list[i].fn;

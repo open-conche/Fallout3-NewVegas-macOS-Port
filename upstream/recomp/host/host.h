@@ -13,6 +13,9 @@ typedef struct { char dll[64]; char name[96]; ShimFn fn; } HostImport;
 extern HostImport host_imports[MAX_IMPORTS];
 extern int host_import_count;
 extern uint32_t host_image_base;
+extern uint32_t host_text_start, host_text_end;
+const char *host_exe_name(void);
+const char *host_game_dir(void);
 
 ShimFn host_find_shim(const char *dll, const char *name);
 int host_shimmed_count(void);

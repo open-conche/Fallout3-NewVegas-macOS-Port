@@ -26,6 +26,12 @@ SHIM(WideCharToMultiByte) {
 }
 SHIM(lstrcatA) { strcat((char *)MEM + ARG(c, 0), (char *)MEM + ARG(c, 1)); RET(c, ARG(c, 0), 2); }
 SHIM(lstrcpyA) { strcpy((char *)MEM + ARG(c, 0), (char *)MEM + ARG(c, 1)); RET(c, ARG(c, 0), 2); }
+SHIM(lstrcmpA) { int r = strcmp((char *)MEM + ARG(c, 0), (char *)MEM + ARG(c, 1)); RET(c, r < 0 ? 0xFFFFFFFFu : r > 0, 2); }
+SHIM(lstrcmpW) {
+    uint32_t a = ARG(c, 0), b = ARG(c, 1), i = 0; int r = 0;
+    for (;; i++) { uint16_t x, y; memcpy(&x, MEM + a + 2 * i, 2); memcpy(&y, MEM + b + 2 * i, 2); if (x != y || !x) { r = (int)x - (int)y; break; } }
+    RET(c, r < 0 ? 0xFFFFFFFFu : r > 0, 2);
+}
 
 // LCMapString: only case mapping matters to the CRT (tolower/toupper tables)
 SHIM(LCMapStringA) {
@@ -45,6 +51,17 @@ SHIM(LCMapStringW) {
         memcpy(MEM + dst + 2 * i, &ch, 2);
     }
     RET(c, (uint32_t)(n < cap ? n : cap), 6);
+}
+SHIM(LCMapStringEx) {
+    uint32_t fl = ARG(c, 1), src = ARG(c, 2); int32_t n = (int32_t)ARG(c, 3); uint32_t dst = ARG(c, 4); int32_t cap = (int32_t)ARG(c, 5);
+    if (n < 0) n = (int32_t)wlen(src) + 1;
+    if (!cap) { RET(c, (uint32_t)n, 9); return; }
+    for (int32_t i = 0; i < n && i < cap; i++) {
+        uint16_t ch; memcpy(&ch, MEM + src + 2 * i, 2);
+        if (ch < 128) ch = (uint16_t)(fl & 0x100 ? tolower(ch) : fl & 0x200 ? toupper(ch) : ch);
+        memcpy(MEM + dst + 2 * i, &ch, 2);
+    }
+    RET(c, (uint32_t)(n < cap ? n : cap), 9);
 }
 SHIM(CompareStringA) {
     uint32_t fl = ARG(c, 1); const char *a = (char *)MEM + ARG(c, 2), *b = (char *)MEM + ARG(c, 4);
@@ -89,8 +106,10 @@ SHIM(GetStringTypeW) {
     RET(c, 1, 4);
 }
 SHIM(GetUserDefaultLCID) { RET(c, 0x409, 0); }
+SHIM(GetUserDefaultLangID) { RET(c, 0x409, 0); }
 SHIM(IsValidLocale) { RET(c, 1, 2); }
 SHIM(EnumSystemLocalesA) { RET(c, 1, 2); }
+SHIM(EnumSystemLocalesW) { RET(c, 1, 2); }
 SHIM(GetLocaleInfoA) {
     uint32_t type = ARG(c, 1) & 0xFFFF, buf = ARG(c, 2), n = ARG(c, 3);
     const char *v = type == 0x1004 ? "1252" : type == 0xB ? "437" : type == 0xE ? "." : type == 0xF ? "," : "";
@@ -110,8 +129,17 @@ SHIM(GetConsoleOutputCP) { RET(c, 437, 0); }
 SHIM(GetConsoleMode) { RET(c, 0, 2); }
 SHIM(WriteConsoleA) { fwrite(MEM + ARG(c, 1), 1, ARG(c, 2), stderr); if (ARG(c, 3)) P32(ARG(c, 3), ARG(c, 2)); RET(c, 1, 5); }
 SHIM(WriteConsoleW) { for (uint32_t i = 0; i < ARG(c, 2); i++) fputc(MEM[ARG(c, 1) + 2 * i], stderr); if (ARG(c, 3)) P32(ARG(c, 3), ARG(c, 2)); RET(c, 1, 5); }
+SHIM(ReadConsoleW) { if (ARG(c, 3)) P32(ARG(c, 3), 0); RET(c, 0, 5); }
+SHIM(PeekNamedPipe) { RET(c, 0, 6); }
 SHIM(SetStdHandle) { RET(c, 1, 2); }
 SHIM(SetEnvironmentVariableA) { RET(c, 1, 2); }
+SHIM(SetEnvironmentVariableW) { RET(c, 1, 2); }
+SHIM(ExpandEnvironmentStringsW) {
+    uint32_t src = ARG(c, 0), dst = ARG(c, 1), n = ARG(c, 2);
+    uint32_t l = wlen(src) + 1;
+    if (dst && n >= l) memcpy(MEM + dst, MEM + src, 2 * l);
+    RET(c, l, 3);
+}
 
 // ---- time --------------------------------------------------------------------------------------
 static void put_systemtime(uint32_t p, struct tm *t, int ms) {
@@ -121,6 +149,16 @@ static void put_systemtime(uint32_t p, struct tm *t, int ms) {
 }
 SHIM(GetLocalTime) { struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); struct tm t; localtime_r(&ts.tv_sec, &t); put_systemtime(ARG(c, 0), &t, (int)(ts.tv_nsec / 1000000)); RET(c, 0, 1); }
 SHIM(GetSystemTime) { struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); struct tm t; gmtime_r(&ts.tv_sec, &t); put_systemtime(ARG(c, 0), &t, (int)(ts.tv_nsec / 1000000)); RET(c, 0, 1); }
+SHIM(SystemTimeToFileTime) {
+    uint16_t v[8]; memcpy(v, MEM + ARG(c, 0), 16);
+    struct tm t = {0};
+    t.tm_year = (int)v[0] - 1900; t.tm_mon = (int)v[1] - 1; t.tm_mday = (int)v[3];
+    t.tm_hour = (int)v[4]; t.tm_min = (int)v[5]; t.tm_sec = (int)v[6];
+    time_t s = timegm(&t);
+    uint64_t ft = ((uint64_t)s + 11644473600ull) * 10000000ull + (uint64_t)v[7] * 10000ull;
+    memcpy(MEM + ARG(c, 1), &ft, 8);
+    RET(c, 1, 2);
+}
 SHIM(FileTimeToSystemTime) {
     uint64_t ft; memcpy(&ft, MEM + ARG(c, 0), 8);
     time_t s = (time_t)(ft / 10000000ull - 11644473600ull); struct tm t; gmtime_r(&s, &t);
@@ -172,18 +210,20 @@ SHIM(TerminateProcess) {
     uint32_t sp = REG(c, R_ESP);
     for (int i = 0, shown = 0; i < 1024 && shown < 24; i++) {
         uint32_t v = G32(sp + 4 * (uint32_t)i);
-        if (v >= 0x401000 && v < 0xfdf000) { fprintf(stderr, "  [esp+%#x] %#x\n", 4 * i, v); shown++; }
+        if (v >= 0x401000 && v < 0x1200000) { fprintf(stderr, "  [esp+%#x] %#x\n", 4 * i, v); shown++; }
     }
     rt_calltrace_dump();
     exit((int)ARG(c, 1));
 }
 
 SHIM_TABLE(text_shims,
-    E(MultiByteToWideChar) E(WideCharToMultiByte) E(lstrcatA) E(lstrcpyA) E(LCMapStringA) E(LCMapStringW)
-    E(CompareStringA) E(CompareStringW) E(GetStringTypeA) E(GetStringTypeW) E(GetUserDefaultLCID)
-    E(IsValidLocale) E(EnumSystemLocalesA) E(GetLocaleInfoA) E(GetLocaleInfoW) E(GetConsoleCP)
-    E(GetConsoleOutputCP) E(GetConsoleMode) E(WriteConsoleA) E(WriteConsoleW) E(SetStdHandle)
-    E(SetEnvironmentVariableA) E(GetLocalTime) E(GetSystemTime) E(FileTimeToSystemTime)
+    E(MultiByteToWideChar) E(WideCharToMultiByte) E(lstrcatA) E(lstrcpyA) E(lstrcmpA) E(lstrcmpW)
+    E(LCMapStringA) E(LCMapStringW) E(LCMapStringEx)
+    E(CompareStringA) E(CompareStringW) E(GetStringTypeA) E(GetStringTypeW) E(GetUserDefaultLCID) E(GetUserDefaultLangID)
+    E(IsValidLocale) E(EnumSystemLocalesA) E(EnumSystemLocalesW) E(GetLocaleInfoA) E(GetLocaleInfoW) E(GetConsoleCP)
+    E(GetConsoleOutputCP) E(GetConsoleMode) E(WriteConsoleA) E(WriteConsoleW) E(ReadConsoleW) E(PeekNamedPipe)
+    E(SetStdHandle) E(SetEnvironmentVariableA) E(SetEnvironmentVariableW) E(ExpandEnvironmentStringsW)
+    E(GetLocalTime) E(GetSystemTime) E(SystemTimeToFileTime) E(FileTimeToSystemTime)
     E(FileTimeToLocalFileTime) E(SystemTimeToTzSpecificLocalTime) E(GetTimeZoneInformation) E(GetSystemInfo)
     E(GlobalMemoryStatus) E(GlobalMemoryStatusEx) E(LocalFree) E(FormatMessageA) E(DebugBreak)
     E(RaiseException) E(RtlUnwind) E(TerminateProcess))

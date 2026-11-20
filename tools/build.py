@@ -45,6 +45,7 @@ def find_unicorn(explicit):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('target', choices=['probe', 'game', 'host-check'])
+    p.add_argument('--game', choices=['fnv', 'fallout3'], default='fnv', help='target game profile')
     p.add_argument('--generated', type=Path, help='full-game emit.py output')
     p.add_argument('--exe', type=Path, help='exact executable used to generate these units')
     p.add_argument('--out', type=Path, default=Path('build'))
@@ -96,8 +97,9 @@ def main():
         if (args.cache / 'manifest.json').exists():
             old_manifest = json.loads((args.cache / 'manifest.json').read_text())
 
-    app_name = args.app_name or ('FNVProbe' if probe else 'Fallout New Vegas')
-    exe_name = 'FNVProbe' if probe else 'FalloutNewVegas'
+    default_app = 'Fallout 3' if args.game == 'fallout3' else 'Fallout New Vegas'
+    app_name = args.app_name or ('FNVProbe' if probe else default_app)
+    exe_name = 'FNVProbe' if probe else ('Fallout3' if args.game == 'fallout3' else 'FalloutNewVegas')
 
     sources = [M / 'FNVApp.m', M / 'FNVPad.c', M / 'FNVDisplay.c', H / 'd3d9_metal.m']
     if probe:
@@ -138,6 +140,8 @@ def main():
                 compiled_source = tmp / ('probe-' + source.name)
                 compiled_source.write_bytes(content)
             flags = ['-O1', '-I', str(H), '-I', str(R), '-I', str(M)]
+            if args.game == 'fallout3':
+                flags.append('-DFNV_GAME_FALLOUT3')
             if codec:
                 flags += ['-DFNV_HAVE_VORBIS', '-I', str(codec / 'include')]
             if unicorn and source.name == 'fallback.c':
@@ -194,12 +198,13 @@ def main():
             run(base + ['-O2', '-Wall', '-Wextra', str(M / 'FNVSteamLauncher.c'), '-o', str(macos_dir / launcher_name)])
             bundle_exe = launcher_name
 
+        bundle_id_prefix = 'dev.f3mac.' if args.game == 'fallout3' else 'dev.fnvmac.'
         info = dict(
             CFBundleDevelopmentRegion='en',
             CFBundleExecutable=bundle_exe,
             CFBundleName=app_name,
             CFBundleDisplayName=app_name,
-            CFBundleIdentifier='dev.fnvmac.' + args.target,
+            CFBundleIdentifier=bundle_id_prefix + args.target,
             CFBundlePackageType='APPL',
             CFBundleVersion=args.version,
             CFBundleShortVersionString='0.1',

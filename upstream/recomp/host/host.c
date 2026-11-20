@@ -114,10 +114,14 @@ static uint32_t load_pe(const char *path) {
     memcpy(MEM + base, d, soh);
     for (int i = 0; i < nsec; i++) {
         uint8_t *s = d + pe + 24 + osz + 40 * i;
-        uint32_t vs, va, rs, rp;
-        memcpy(&vs, s + 8, 4); memcpy(&va, s + 12, 4); memcpy(&rs, s + 16, 4); memcpy(&rp, s + 20, 4);
+        uint32_t vs, va, rs, rp, sc;
+        memcpy(&vs, s + 8, 4); memcpy(&va, s + 12, 4); memcpy(&rs, s + 16, 4); memcpy(&rp, s + 20, 4); memcpy(&sc, s + 36, 4);
         uint32_t take = rs < vs || !vs ? rs : vs;
         memcpy(MEM + base + va, d + rp, take);
+        if (!memcmp(s, ".text", 5) || (host_text_start == 0x401000 && (sc & 0x20000000u))) {
+            host_text_start = base + va;
+            host_text_end = base + va + (vs ? vs : rs);
+        }
     }
     // static TLS (__declspec(thread)): snapshot the template; host_thread_init gives every thread its
     // own copy in TLS array[index], as the Windows loader does
@@ -139,6 +143,7 @@ static uint32_t load_pe(const char *path) {
 }
 
 uint32_t host_image_base;
+uint32_t host_text_start = 0x401000, host_text_end = 0x1000000;
 uint8_t *host_tls_template;
 uint32_t host_tls_template_size, host_tls_block_size;
 

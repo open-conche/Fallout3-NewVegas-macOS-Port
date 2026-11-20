@@ -1,21 +1,25 @@
 #!/bin/bash
-# Fallout: New Vegas native macOS (Apple Silicon) quick builder & packager.
+# Fallout: New Vegas & Fallout 3 native macOS (Apple Silicon) quick builder & packager.
 #
 # Recompiles your own PC copy of Fallout: New Vegas (Steam, GOG, or Epic)
-# into a standalone Apple Silicon macOS bundle ("Fallout New Vegas.app").
+# or Fallout 3 (GOG or Steam) into a standalone Apple Silicon macOS bundle
+# ("Fallout New Vegas.app" or "Fallout 3.app").
 #
-# Usage: quick-install.sh [--dmg] [--keep-ghidra] [--unpack-drm] [--no-steam] [game_files_dir]
-#   --dmg            also wrap the app in "Fallout New Vegas.dmg"
+# Usage: quick-install.sh [--game fnv|fallout3] [--dmg] [--keep-ghidra] [--unpack-drm] [--no-steam] [game_files_dir]
+#   --game <id>      select game explicitly: fnv or fallout3 (default: auto-detect)
+#   --dmg            also wrap the app in "<App Name>.dmg"
 #   --keep-ghidra    keep the Ghidra project and P-code JSONL after translation
 #   --unpack-drm     unattended: allow downloading Steamless + Mono to strip SteamStub DRM
-#   --no-steam       keep Steam builds in offline mode (skip Steam launcher, overlay & libsteam_api.dylib)
-#   game_files_dir   optional folder containing FalloutNV.exe and Data/
-#                    or an existing "Fallout New Vegas.app" bundle.
+#   --no-steam       keep FNV Steam builds in offline mode (skip Steam launcher, overlay & libsteam_api.dylib)
+#   game_files_dir   optional folder containing FalloutNV.exe/Fallout3.exe and Data/
+#                    or an existing app bundle.
 set -euo pipefail
 
 GOG_EXE_SHA256="89e7020487e80f20ddc92ea641c4433b2c6839a82f45a076e414d167d11dd0fe"
 STEAM_OG_EXE_SHA256="3a87f92f011e5dc9179ddf733cf08be2b39ea6e5b7a8a9e3a9a72dafcc1b104d"
 STEAM_UNPACKED_EXE_SHA256="19406942e48724d797300c4ea6be9ac69a32f670b8c35db09279a2258422739f"
+F3_GOG_EXE_SHA256="df9f0e1ec2c5413a9cef2db2dde6d926b99707d528049af4eb15538587d55f99"
+F3_STEAM_EXE_SHA256="c3f97c2255fa041a851c17cf372d69aaadd8694e2dc4230ba556001bbfbd2f3e"
 STEAMLESS_VERSION="v3.1.0.5"
 STEAMLESS_URL="https://github.com/atom0s/Steamless/releases/download/v3.1.0.5/Steamless.v3.1.0.5.-.by.atom0s.zip"
 STEAMLESS_ZIP_SHA256="e3e2d22e098ff3fb359b2876aa2bed9596f0501e6ff588cbffae90a76d2dc4f5"
@@ -58,7 +62,7 @@ banner() {
 	printf '  %s██║     ██║ ╚████║ ╚████╔╝    ██║ ╚═╝ ██║██║  ██║╚██████╗%s\n' "$G5" "$RESET"
 	printf '  %s╚═╝     ╚═╝  ╚═══╝  ╚═══╝     ╚═╝     ╚═╝╚═╝  ╚═╝ ╚═════╝%s\n' "$G5" "$RESET"
 	printf '\n'
-	printf '  %sFallout: New Vegas · Metal · Apple Silicon%s\n' "$DIM" "$RESET"
+	printf '  %sFallout: New Vegas & Fallout 3 · Metal · Apple Silicon%s\n' "$DIM" "$RESET"
 	printf '\n'
 }
 
@@ -167,16 +171,30 @@ WANT_DMG=no
 KEEP_GHIDRA=no
 UNPACK_DRM=no
 NO_STEAM=no
+GAME_ID=""
 GAME_ARG=""
-for arg in "$@"; do
-	case "$arg" in
+while [ $# -gt 0 ]; do
+	case "$1" in
 		--dmg) WANT_DMG=yes ;;
 		--keep-ghidra) KEEP_GHIDRA=yes ;;
 		--unpack-drm) UNPACK_DRM=yes ;;
 		--no-steam) NO_STEAM=yes ;;
-		*) GAME_ARG="$arg" ;;
+		--game)
+			shift
+			[ $# -gt 0 ] || die "--game requires an argument (fnv or fallout3)."
+			GAME_ID="$1"
+			;;
+		--game=*) GAME_ID="${1#--game=}" ;;
+		-*) die "Unknown option: $1" ;;
+		*) GAME_ARG="$1" ;;
 	esac
+	shift
 done
+
+case "$GAME_ID" in
+	""|fnv|fallout3) ;;
+	*) die "Unsupported --game value '$GAME_ID' (expected fnv or fallout3)." ;;
+esac
 
 banner
 
@@ -214,9 +232,9 @@ cleanup() {
 trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
-# Step 1: Locate Fallout: New Vegas game files
+# Step 1: Locate game files (Fallout: New Vegas or Fallout 3)
 # ---------------------------------------------------------------------------
-step "Locating Fallout: New Vegas game files"
+step "Locating game files (Fallout: New Vegas or Fallout 3)"
 
 resolve_game_dir() {
 	local base="${1%/}" root dir
@@ -228,9 +246,19 @@ resolve_game_dir() {
 			"$root/Fallout New Vegas/app" \
 			"$root/Fallout New Vegas Ultimate" \
 			"$root/steamapps/common/Fallout New Vegas" \
+			"$root/Fallout 3" \
+			"$root/Fallout 3 goty" \
+			"$root/Fallout 3 GOTY" \
+			"$root/Fallout 3/app" \
+			"$root/steamapps/common/Fallout 3 goty" \
+			"$root/steamapps/common/Fallout 3" \
 			"$root/Contents/Resources/GameData"; do
-			if [ -f "$dir/FalloutNV.exe" ] && [ -f "$dir/Data/FalloutNV.esm" ]; then
-				echo "$dir"
+			if { [ -z "$GAME_ID" ] || [ "$GAME_ID" = fnv ]; } && [ -f "$dir/FalloutNV.exe" ] && [ -f "$dir/Data/FalloutNV.esm" ]; then
+				echo "fnv|$dir"
+				return 0
+			fi
+			if { [ -z "$GAME_ID" ] || [ "$GAME_ID" = fallout3 ]; } && [ -f "$dir/Fallout3.exe" ] && [ -f "$dir/Data/Fallout3.esm" ]; then
+				echo "fallout3|$dir"
 				return 0
 			fi
 		done
@@ -238,46 +266,92 @@ resolve_game_dir() {
 	return 1
 }
 
+RESOLVED=""
 ASSET_SRC=""
 if [ -n "$GAME_ARG" ]; then
-	ASSET_SRC="$(resolve_game_dir "$GAME_ARG" || true)"
-	[ -n "$ASSET_SRC" ] || die "Could not find FalloutNV.exe + Data/FalloutNV.esm in: $GAME_ARG"
+	RESOLVED="$(resolve_game_dir "$GAME_ARG" || true)"
+	[ -n "$RESOLVED" ] || die "Could not find FalloutNV.exe + Data/FalloutNV.esm or Fallout3.exe + Data/Fallout3.esm in: $GAME_ARG"
 else
-	CANDIDATES=(
-		"/Applications/$APP_NAME.app"
-		"$HOME/Applications/$APP_NAME.app"
-		"$HOME/Downloads/$APP_NAME.app"
-		"$HOME/Downloads/Fallout New Vegas"
-		"$HOME/Downloads/Fallout New Vegas Ultimate"
-		"$HOME/Downloads/fnv"
-		"$HOME/Downloads/app"
-		"$HOME/Games/Fallout New Vegas"
-		"$HOME/Library/Application Support/Steam/steamapps/common/Fallout New Vegas"
-		"$HOME/Steam/steamapps/common/Fallout New Vegas"
-		"$HOME/Steam/fnv"
-		"$HOME/Documents/Fallout New Vegas"
-	)
-	shopt -s nullglob
-	CANDIDATES+=(
-		"$HOME"/Downloads/depots/22380/*
-		"$HOME"/depots/22380/*
-		"$HOME"/Downloads/depots/22490/*
-		"$HOME"/depots/22490/*
-	)
-	shopt -u nullglob
+	CANDIDATES=()
+	if [ -z "$GAME_ID" ] || [ "$GAME_ID" = fnv ]; then
+		CANDIDATES+=(
+			"/Applications/Fallout New Vegas.app"
+			"$HOME/Applications/Fallout New Vegas.app"
+			"$HOME/Downloads/Fallout New Vegas.app"
+			"$HOME/Downloads/Fallout New Vegas"
+			"$HOME/Downloads/Fallout New Vegas Ultimate"
+			"$HOME/Downloads/fnv"
+			"$HOME/Downloads/app"
+			"$HOME/Games/Fallout New Vegas"
+			"$HOME/Library/Application Support/Steam/steamapps/common/Fallout New Vegas"
+			"$HOME/Steam/steamapps/common/Fallout New Vegas"
+			"$HOME/Steam/fnv"
+			"$HOME/Documents/Fallout New Vegas"
+		)
+		shopt -s nullglob
+		CANDIDATES+=(
+			"$HOME"/Downloads/depots/22380/*
+			"$HOME"/depots/22380/*
+			"$HOME"/Downloads/depots/22490/*
+			"$HOME"/depots/22490/*
+		)
+		shopt -u nullglob
+	fi
+	if [ -z "$GAME_ID" ] || [ "$GAME_ID" = fallout3 ]; then
+		CANDIDATES+=(
+			"/Applications/Fallout 3.app"
+			"$HOME/Applications/Fallout 3.app"
+			"$HOME/Downloads/Fallout 3.app"
+			"$HOME/Downloads/Fallout 3"
+			"$HOME/Downloads/fallout 3"
+			"$HOME/Downloads/Fallout 3 goty"
+			"$HOME/Downloads/Fallout 3 GOTY"
+			"$HOME/Games/Fallout 3"
+			"$HOME/Library/Application Support/Steam/steamapps/common/Fallout 3 goty"
+			"$HOME/Library/Application Support/Steam/steamapps/common/Fallout 3"
+			"$HOME/Steam/steamapps/common/Fallout 3 goty"
+			"$HOME/Documents/Fallout 3"
+		)
+		shopt -s nullglob
+		CANDIDATES+=(
+			"$HOME"/Downloads/depots/22370/*
+			"$HOME"/depots/22370/*
+		)
+		shopt -u nullglob
+	fi
 	for candidate in "${CANDIDATES[@]}"; do
-		ASSET_SRC="$(resolve_game_dir "$candidate" || true)"
-		[ -n "$ASSET_SRC" ] && break
+		RESOLVED="$(resolve_game_dir "$candidate" || true)"
+		[ -n "$RESOLVED" ] && break
 	done
 fi
 
-[ -n "$ASSET_SRC" ] || die "Fallout: New Vegas folder not found." \
-	"Pass the path to your Fallout New Vegas folder (containing FalloutNV.exe and Data/):" \
-	"  ./quick-install.sh ~/Downloads/\"Fallout New Vegas\""
+[ -n "$RESOLVED" ] || die "Game folder not found (Fallout: New Vegas or Fallout 3)." \
+	"Pass the path to your game folder (containing FalloutNV.exe or Fallout3.exe and Data/):" \
+	"  ./quick-install.sh ~/Downloads/\"Fallout New Vegas\"" \
+	"  ./quick-install.sh --game fallout3 ~/Downloads/\"Fallout 3\""
 
-ok "Found game files at: $ASSET_SRC"
+GAME_ID="${RESOLVED%%|*}"
+ASSET_SRC="${RESOLVED#*|}"
 
-EXE_PATH="$ASSET_SRC/FalloutNV.exe"
+if [ "$GAME_ID" = fallout3 ]; then
+	GAME_LABEL="Fallout 3"
+	APP_NAME="Fallout 3"
+	VOLNAME="Fallout 3"
+	GAME_EXE_NAME="Fallout3.exe"
+	GAME_SUPPORT_DIR="Fallout3"
+	GHIDRA_PROJ_NAME="f3"
+else
+	GAME_LABEL="Fallout: New Vegas"
+	APP_NAME="Fallout New Vegas"
+	VOLNAME="Fallout New Vegas"
+	GAME_EXE_NAME="FalloutNV.exe"
+	GAME_SUPPORT_DIR="FalloutNV"
+	GHIDRA_PROJ_NAME="fnv"
+fi
+
+ok "Found $GAME_LABEL game files at: $ASSET_SRC"
+
+EXE_PATH="$ASSET_SRC/$GAME_EXE_NAME"
 
 has_bind_section() {
 	python3 - "$1" <<'PY'
@@ -329,7 +403,7 @@ unpack_steam_drm() {
 	fi
 
 	local work_dir="$TMP/steamless-work"
-	local work_exe="$work_dir/FalloutNV.exe"
+	local work_exe="$work_dir/$GAME_EXE_NAME"
 	local log_file="$TMP/steamless.log"
 	mkdir -p "$work_dir"
 	cp "$EXE_PATH" "$work_exe"
@@ -338,12 +412,12 @@ unpack_steam_drm() {
 		bash -c 'MONO_PATH="$1" "$2" "$3" "$4" >"$5" 2>&1' _ \
 		"$steamless_dir/Plugins" "$mono_bin" "$steamless_dir/Steamless.CLI.exe" "$work_exe" "$log_file"; then
 		cat "$log_file" >&2 || true
-		die "Steamless failed to unpack FalloutNV.exe."
+		die "Steamless failed to unpack $GAME_EXE_NAME."
 	fi
 
 	local unpacked="$work_exe.unpacked.exe"
 	[ -f "$unpacked" ] || { cat "$log_file" >&2 || true; die "Steamless did not produce an unpacked executable."; }
-	[ "$(has_bind_section "$unpacked")" = no ] || die "Unpacked FalloutNV.exe still contains a .bind section."
+	[ "$(has_bind_section "$unpacked")" = no ] || die "Unpacked $GAME_EXE_NAME still contains a .bind section."
 
 	mv "$unpacked" "$EXE_PATH"
 	chmod +x "$EXE_PATH"
@@ -352,7 +426,35 @@ unpack_steam_drm() {
 HAS_BIND="$(has_bind_section "$EXE_PATH")"
 ACTUAL_SHA="$(shasum -a 256 "$EXE_PATH" | awk '{print $1}')"
 
-if [ "$ACTUAL_SHA" = "$GOG_EXE_SHA256" ] && [ "$HAS_BIND" = no ]; then
+if [ "$GAME_ID" = fallout3 ]; then
+	if [ "$ACTUAL_SHA" = "$F3_GOG_EXE_SHA256" ] && [ "$HAS_BIND" = no ]; then
+		ok "Verified DRM-free GOG Fallout3.exe (SHA-256 matches precomputed symbols)"
+	elif [ "$ACTUAL_SHA" = "$F3_STEAM_EXE_SHA256" ] && [ "$HAS_BIND" = no ]; then
+		ok "Verified DRM-free Steam Fallout3.exe 1.7.0.4 ($ACTUAL_SHA)"
+	elif [ "$HAS_BIND" = yes ]; then
+		warn "SteamStub DRM detected in Fallout3.exe (.bind section present, $ACTUAL_SHA)"
+		printf '    The static recompiler requires an unencrypted executable.\n'
+		printf '    This script can download official Steamless (%s) + Mono (if missing),\n' "$STEAMLESS_VERSION"
+		printf '    back up %s to %s.og, and strip the DRM automatically.\n' "$GAME_EXE_NAME" "$GAME_EXE_NAME"
+		if [ "$UNPACK_DRM" != yes ]; then
+			if [ -t 0 ]; then
+				printf '  %s?%s Remove SteamStub DRM now? [y/N] ' "$CYAN" "$RESET"
+				read -r REPLY
+				case "$REPLY" in
+					[yY]|[yY][eE][sS]|[sS]) UNPACK_DRM=yes ;;
+					*) die "Aborted. Cannot statically recompile a SteamStub-packed executable." ;;
+				esac
+			else
+				die "Non-interactive session: re-run interactively or pass --unpack-drm to strip SteamStub DRM."
+			fi
+		fi
+		unpack_steam_drm
+		ACTUAL_SHA="$(shasum -a 256 "$EXE_PATH" | awk '{print $1}')"
+		ok "Removed SteamStub DRM from $GAME_EXE_NAME ($ACTUAL_SHA)"
+	else
+		warn "$GAME_EXE_NAME SHA-256 differs from supported GOG/Steam builds ($ACTUAL_SHA)"
+	fi
+elif [ "$ACTUAL_SHA" = "$GOG_EXE_SHA256" ] && [ "$HAS_BIND" = no ]; then
 	ok "Verified DRM-free GOG FalloutNV.exe (SHA-256 matches precomputed symbols)"
 elif [ "$ACTUAL_SHA" = "$STEAM_UNPACKED_EXE_SHA256" ] && [ "$HAS_BIND" = no ]; then
 	ok "Verified unpacked Steam FalloutNV.exe (SHA-256 matches precomputed Steam symbols)"
@@ -387,7 +489,7 @@ elif [ "$ACTUAL_SHA" = "$STEAM_OG_EXE_SHA256" ] || [ "$HAS_BIND" = yes ]; then
 		warn "Removed SteamStub DRM, but unpacked SHA-256 differs ($ACTUAL_SHA)"
 	fi
 else
-	warn "FalloutNV.exe SHA-256 differs from supported GOG/Steam builds ($ACTUAL_SHA)"
+	warn "$GAME_EXE_NAME SHA-256 differs from supported GOG/Steam builds ($ACTUAL_SHA)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -433,9 +535,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 4: Translate FalloutNV.exe -> C (Ghidra + emit.py, cached)
+# Step 4: Translate executable -> C (Ghidra + emit.py, cached)
 # ---------------------------------------------------------------------------
-step "Translating FalloutNV.exe to native ARM64 C (cached per executable)"
+step "Translating $GAME_EXE_NAME to native ARM64 C (cached per executable)"
 
 SHORT_SHA="${ACTUAL_SHA:0:12}"
 TRANS_WORK="$CACHE_ROOT/translate-$SHORT_SHA"
@@ -455,16 +557,24 @@ else
 
 	mkdir -p "$GHIDRA_PROJ" "$PASS_OUT"
 	SYM_DIR=""
-	if [ "$ACTUAL_SHA" = "$GOG_EXE_SHA256" ]; then
-		SYM_DIR="$SCRIPT_DIR/symbols/fnv"
-	elif [ "$ACTUAL_SHA" = "$STEAM_UNPACKED_EXE_SHA256" ]; then
-		SYM_DIR="$SCRIPT_DIR/symbols/fnv-steam"
+	if [ "$GAME_ID" = fallout3 ]; then
+		if [ "$ACTUAL_SHA" = "$F3_GOG_EXE_SHA256" ]; then
+			SYM_DIR="$SCRIPT_DIR/symbols/fallout3"
+		elif [ "$ACTUAL_SHA" = "$F3_STEAM_EXE_SHA256" ]; then
+			SYM_DIR="$SCRIPT_DIR/symbols/fallout3-steam"
+		fi
+	else
+		if [ "$ACTUAL_SHA" = "$GOG_EXE_SHA256" ]; then
+			SYM_DIR="$SCRIPT_DIR/symbols/fnv"
+		elif [ "$ACTUAL_SHA" = "$STEAM_UNPACKED_EXE_SHA256" ]; then
+			SYM_DIR="$SCRIPT_DIR/symbols/fnv-steam"
+		fi
 	fi
 	if [ -n "$SYM_DIR" ] && [ -f "$SYM_DIR/functions.tsv" ]; then
 		ok "Using precomputed function & jump-table metadata ($SYM_DIR)"
-		rm -rf "$GHIDRA_PROJ/fnv.gpr" "$GHIDRA_PROJ/fnv.rep"
+		rm -rf "$GHIDRA_PROJ/$GHIDRA_PROJ_NAME.gpr" "$GHIDRA_PROJ/$GHIDRA_PROJ_NAME.rep"
 		run_task "Disassembling & exporting P-code (~1 min, no Ghidra auto-analysis)" \
-			env GHIDRA_HEADLESS_MAXMEM=4G "$HEADLESS" "$GHIDRA_PROJ" fnv \
+			env GHIDRA_HEADLESS_MAXMEM=4G "$HEADLESS" "$GHIDRA_PROJ" "$GHIDRA_PROJ_NAME" \
 			-import "$EXE_PATH" -noanalysis \
 			-scriptPath "$SCRIPTS" \
 			-postScript ApplyMetadataAndDump.java "$SYM_DIR" "$JSONL" \
@@ -481,15 +591,15 @@ else
 			elif [ "$MEM_GB" -ge 16 ]; then
 				export GHIDRA_HEADLESS_MAXMEM=10G
 			else
-				export GHIDRA_HEADLESS_MAXMEM=6G
+				export GHIDRA_HEADLESS_MAXMEM=5G
 			fi
 		fi
 
 		if [ ! -f "$GHIDRA_PROJ/ghidra.done" ]; then
-			rm -rf "$GHIDRA_PROJ/fnv.gpr" "$GHIDRA_PROJ/fnv.rep"
+			rm -rf "$GHIDRA_PROJ/$GHIDRA_PROJ_NAME.gpr" "$GHIDRA_PROJ/$GHIDRA_PROJ_NAME.rep"
 			printf '  %sRunning Ghidra import & auto-analysis (heap %s, first run only)...%s\n' "$DIM" "$GHIDRA_HEADLESS_MAXMEM" "$RESET"
 			run_task "Ghidra import & analysis ($EXE_NAME)" \
-				"$HEADLESS" "$GHIDRA_PROJ" fnv -import "$EXE_PATH" \
+				"$HEADLESS" "$GHIDRA_PROJ" "$GHIDRA_PROJ_NAME" -import "$EXE_PATH" \
 				-log "$GHIDRA_LOG" -scriptlog "$TRANS_WORK/script.log"
 			touch "$GHIDRA_PROJ/ghidra.done"
 		else
@@ -497,22 +607,33 @@ else
 		fi
 
 		run_task "Repairing functions, jump tables & CRT tables (pass 1/2)" \
-			"$HEADLESS" "$GHIDRA_PROJ" fnv -process "$EXE_NAME" -noanalysis \
+			"$HEADLESS" "$GHIDRA_PROJ" "$GHIDRA_PROJ_NAME" -process "$EXE_NAME" -noanalysis \
 			-scriptPath "$SCRIPTS" \
 			-postScript FixNoReturn.java \
 			-postScript ResolveJumpTables.java \
 			-postScript FixEntries.java "$PASS_OUT" \
 			-log "$GHIDRA_LOG"
 
-		run_task "Repairing functions, CRT operation tables & exporting P-code (pass 2/2)" \
-			"$HEADLESS" "$GHIDRA_PROJ" fnv -process "$EXE_NAME" -noanalysis \
+		if ! run_task "Repairing functions, CRT operation tables & exporting P-code (pass 2/2)" \
+			"$HEADLESS" "$GHIDRA_PROJ" "$GHIDRA_PROJ_NAME" -process "$EXE_NAME" -noanalysis \
 			-scriptPath "$SCRIPTS" \
 			-postScript FixNoReturn.java \
 			-postScript ResolveJumpTables.java \
 			-postScript ResolveCrtOperationTables.java apply "$PASS_OUT/crt-report.json" "$PASS_OUT/crt-extra.json" \
 			-postScript FixEntries.java "$PASS_OUT" \
 			-postScript DumpPcode.java "$JSONL" all \
-			-log "$GHIDRA_LOG"
+			-log "$GHIDRA_LOG"; then
+			warn "ResolveCrtOperationTables did not apply; retrying pass 2 without CRT table recovery"
+			rm -f "$PASS_OUT/crt-report.json" "$PASS_OUT/crt-extra.json"
+			run_task "Repairing functions & exporting P-code (pass 2/2 fallback)" \
+				"$HEADLESS" "$GHIDRA_PROJ" "$GHIDRA_PROJ_NAME" -process "$EXE_NAME" -noanalysis \
+				-scriptPath "$SCRIPTS" \
+				-postScript FixNoReturn.java \
+				-postScript ResolveJumpTables.java \
+				-postScript FixEntries.java "$PASS_OUT" \
+				-postScript DumpPcode.java "$JSONL" all \
+				-log "$GHIDRA_LOG"
+		fi
 
 		python3 - "$PASS_OUT/extra_entries.json" "$PASS_OUT/crt-extra.json" "$PASS_OUT/merged-extra-entries.json" <<'PY'
 import json, sys
@@ -536,22 +657,22 @@ PY
 	fi
 
 	if [ "$KEEP_GHIDRA" = no ]; then
-		rm -rf "$GHIDRA_PROJ" "$JSONL" "$JSONL.regs.json"
+		rm -rf "$GHIDRA_PROJ" "$JSONL" "$JSONL.regs.json" "$JSONL.userops.json"
 		ok "Cleaned temporary Ghidra project & P-code dump to save disk space"
 	fi
 fi
 
 # ---------------------------------------------------------------------------
-# Step 5: Compile & link Fallout New Vegas.app
+# Step 5: Compile & link app bundle
 # ---------------------------------------------------------------------------
 step "Compiling native ARM64 Metal engine & game code"
 
-OBJ_CACHE="$CACHE_ROOT/objects-$SHORT_SHA"
+OBJ_CACHE="$CACHE_ROOT/objects-$GAME_ID-$SHORT_SHA"
 BUILD_OUT="$TMP/build"
 mkdir -p "$BUILD_OUT"
 
 STEAM_BUILD_ARGS=()
-if [ "$NO_STEAM" != yes ] && [ "$ACTUAL_SHA" != "$GOG_EXE_SHA256" ] && { [ "$ACTUAL_SHA" = "$STEAM_UNPACKED_EXE_SHA256" ] || [ -f "$ASSET_SRC/steam_api.dll" ]; }; then
+if [ "$GAME_ID" = fnv ] && [ "$NO_STEAM" != yes ] && [ "$ACTUAL_SHA" != "$GOG_EXE_SHA256" ] && { [ "$ACTUAL_SHA" = "$STEAM_UNPACKED_EXE_SHA256" ] || [ -f "$ASSET_SRC/steam_api.dll" ]; }; then
 	SW_DIR="$CACHE_ROOT/steamworks/20.1.0"
 	SW_DYLIB="$SW_DIR/libsteam_api.dylib"
 	if [ ! -f "$SW_DYLIB" ]; then
@@ -595,6 +716,7 @@ fi
 
 printf '  %sCompiling translation units with Apple Clang (cached incrementally)...%s\n' "$DIM" "$RESET"
 python3 "$SCRIPT_DIR/tools/build.py" game \
+	--game "$GAME_ID" \
 	--generated "$GEN_DIR" \
 	--exe "$EXE_PATH" \
 	--codec-prefix "$CODEC_PREFIX" \
@@ -619,7 +741,7 @@ mkdir -p "$GDATA"
 
 # If ASSET_SRC is already inside an existing .app's GameData, check if same/different
 move_game_files() {
-	mv "$ASSET_SRC/FalloutNV.exe" "$GDATA/"
+	mv "$ASSET_SRC/$GAME_EXE_NAME" "$GDATA/"
 	mv "$ASSET_SRC/Data" "$GDATA/"
 	for ini in "$ASSET_SRC"/*.ini; do
 		[ -e "$ini" ] && mv "$ini" "$GDATA/"
@@ -663,7 +785,7 @@ if [ -n "$VIDEO_DIR" ]; then
 	fi
 fi
 
-mkdir -p "$HOME/Library/Application Support/FalloutNV/UserDocuments" "$HOME/Library/Logs/FalloutNV"
+mkdir -p "$HOME/Library/Application Support/$GAME_SUPPORT_DIR/UserDocuments" "$HOME/Library/Logs/$GAME_SUPPORT_DIR"
 
 # ---------------------------------------------------------------------------
 # Step 7: Ad-hoc sign & finalize
@@ -685,7 +807,7 @@ if [ "$WANT_DMG" = no ]; then
 	ok "Placed $APP_NAME.app in $DEST_DIR"
 	printf '\n%s✔ Done!%s %s is ready.\n' "$GREEN$BOLD" "$RESET" "$DEST_DIR/$APP_NAME.app"
 	printf '  Double-click it in Applications (or Launchpad/Spotlight) to play.\n'
-	printf '  Saves & INIs live in ~/Library/Application Support/FalloutNV/\n\n'
+	printf '  Saves & INIs live in ~/Library/Application Support/%s/\n\n' "$GAME_SUPPORT_DIR"
 	open -R "$DEST_DIR/$APP_NAME.app" 2>/dev/null || true
 	exit 0
 fi
