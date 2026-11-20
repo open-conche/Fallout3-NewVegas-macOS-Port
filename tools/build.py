@@ -221,7 +221,8 @@ def main():
             info['FNVExecutableSHA256'] = digest(args.exe)
         info['FNVGuestCallTraceEnabled'] = bool(not probe and not args.no_call_trace)
         info['FNVOptimizationLevel'] = 'O1'
-        info.update(compile_icon(tmp, resources_dir))
+        icon_source = M / 'Assets' / ('AppIcon-Fallout3.png' if args.game == 'fallout3' else 'AppIcon.png')
+        info.update(compile_icon(tmp, resources_dir, icon_source))
         try:
             info['FNVBuildSourceCommit'] = subprocess.check_output(
                 ['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True, stderr=subprocess.DEVNULL
