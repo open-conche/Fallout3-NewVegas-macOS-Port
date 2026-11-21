@@ -339,10 +339,53 @@ SHIM(GetPrivateProfileIntA) {
     uint32_t r = ini_get(GSTR(ARG(c, 3)), GSTR(ARG(c, 0)), GSTR(ARG(c, 1)), v, sizeof v) ? (uint32_t)strtol(v, NULL, 0) : ARG(c, 2);
     RET(c, r, 4);
 }
+// Under the static recompiler, Fallout 3's float formatting occasionally emits non-numeric
+// strings (e.g. 0.000D, ?00.0000, D0.0000, I000.0000, <5000.0000) when writing INI settings.
+// Guard all Bethesda float keys (f[A-Z]*) so corrupted values never overwrite valid settings
+// (keeping the previous valid value, a stock default, or skipping the corrupted write).
+static int is_float_ini_key(const char *key) {
+    return key && key[0] == 'f' && key[1] >= 'A' && key[1] <= 'Z';
+}
+
+static int float_setting_valid(const char *s) {
+    if (!s || !*s) return 0;
+    char *end = NULL;
+    errno = 0;
+    (void)strtod(s, &end);
+    if (end == s || errno == ERANGE) return 0;
+    while (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n') end++;
+    return *end == 0;
+}
+
+static const char *float_setting_default(const char *key) {
+    if (!strcasecmp(key, "fMouseSensitivity")) return "0.0020";
+    if (!strcasecmp(key, "fXenonVertLookSpeed")) return "1200.0000";
+    if (!strcasecmp(key, "fXenonHorizLookSpeed")) return "1500.0000";
+    return NULL;
+}
+
 // INI write: replace key in its section, or append to the section, or append a new section.
 // A NULL key deletes the section, a NULL value deletes the key (Windows semantics).
 SHIM(WritePrivateProfileStringA) {
     const char *sec = GSTR(ARG(c, 0)), *key = GSTR(ARG(c, 1)), *val = GSTR(ARG(c, 2)), *file = GSTR(ARG(c, 3));
+    char valbuf[64];
+    if (key && val && file && is_float_ini_key(key) && !float_setting_valid(val)) {
+        char previous[64];
+        const char *fallback = float_setting_default(key);
+        if (sec && ini_get(file, sec, key, previous, sizeof previous) && float_setting_valid(previous)) {
+            snprintf(valbuf, sizeof valbuf, "%s", previous);
+            if (trace_files()) fprintf(stderr, "[ini] preserved %s=%s (rejected %s)\n", key, valbuf, val);
+            val = valbuf;
+        } else if (fallback) {
+            snprintf(valbuf, sizeof valbuf, "%s", fallback);
+            if (trace_files()) fprintf(stderr, "[ini] repaired %s=%s -> %s\n", key, val, valbuf);
+            val = valbuf;
+        } else {
+            if (trace_files()) fprintf(stderr, "[ini] skipped corrupted float %s=%s\n", key, val);
+            RET(c, 1, 4);
+            return;
+        }
+    }
     char p[1024]; host_path(file, p, sizeof p);
     FILE *f = fopen(p, "r");
     size_t cap = 1 << 16, len = 0; char *out = malloc(cap); out[0] = 0;
