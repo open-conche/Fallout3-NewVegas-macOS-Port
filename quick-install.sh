@@ -5,13 +5,14 @@
 # or Fallout 3 (GOG or Steam) into a standalone Apple Silicon macOS bundle
 # ("Fallout New Vegas.app" or "Fallout 3.app").
 #
-# Usage: quick-install.sh [--game fnv|fallout3] [--dmg] [--keep-ghidra] [--unpack-drm] [--no-steam] [game_files_dir]
+# Usage: quick-install.sh [--game fnv|fallout3] [--dmg] [--keep-ghidra] [--unpack-drm] [--no-steam] [--with-steam] [game_files_dir]
 #   --game <id>      select game explicitly: fnv or fallout3 (default: auto-detect;
 #                    a numbered menu appears when several installations are found)
 #   --dmg            also wrap the app in "<App Name>.dmg"
 #   --keep-ghidra    keep the Ghidra project and P-code JSONL after translation
 #   --unpack-drm     unattended: allow downloading Steamless + Mono to strip SteamStub DRM
-#   --no-steam       keep Steam builds in offline mode (skip Steam launcher, overlay & libsteam_api.dylib)
+#   --no-steam       keep Steam builds in offline mode (skip Steam launcher, overlay & libsteam_api.dylib; already default for Fallout 3)
+#   --with-steam     opt into Steam launcher & Overlay for Fallout 3 Steam builds (off by default)
 #   game_files_dir   optional folder containing FalloutNV.exe/Fallout3.exe and Data/
 #                    or an existing app bundle.
 set -euo pipefail
@@ -172,6 +173,7 @@ WANT_DMG=no
 KEEP_GHIDRA=no
 UNPACK_DRM=no
 NO_STEAM=no
+WITH_STEAM=no
 GAME_ID=""
 GAME_ARG=""
 while [ $# -gt 0 ]; do
@@ -180,6 +182,7 @@ while [ $# -gt 0 ]; do
 		--keep-ghidra) KEEP_GHIDRA=yes ;;
 		--unpack-drm) UNPACK_DRM=yes ;;
 		--no-steam) NO_STEAM=yes ;;
+		--with-steam) WITH_STEAM=yes ;;
 		--game)
 			shift
 			[ $# -gt 0 ] || die "--game requires an argument (fnv or fallout3)."
@@ -750,12 +753,16 @@ STEAM_BUILD_ARGS=()
 STEAM_GOG_SHA="$GOG_EXE_SHA256"
 STEAM_UNPACKED_SHA="$STEAM_UNPACKED_EXE_SHA256"
 STEAM_DEFAULT_APPID="22380"
+WANT_STEAM=no
 if [ "$GAME_ID" = fallout3 ]; then
 	STEAM_GOG_SHA="$F3_GOG_EXE_SHA256"
 	STEAM_UNPACKED_SHA="$F3_STEAM_EXE_SHA256"
 	STEAM_DEFAULT_APPID="22370"
+	[ "$WITH_STEAM" = yes ] && [ "$NO_STEAM" != yes ] && WANT_STEAM=yes
+elif [ "$NO_STEAM" != yes ]; then
+	WANT_STEAM=yes
 fi
-if [ "$NO_STEAM" != yes ] && [ "$ACTUAL_SHA" != "$STEAM_GOG_SHA" ] && { [ "$ACTUAL_SHA" = "$STEAM_UNPACKED_SHA" ] || [ -f "$ASSET_SRC/steam_api.dll" ]; }; then
+if [ "$WANT_STEAM" = yes ] && [ "$ACTUAL_SHA" != "$STEAM_GOG_SHA" ] && { [ "$ACTUAL_SHA" = "$STEAM_UNPACKED_SHA" ] || [ -f "$ASSET_SRC/steam_api.dll" ]; }; then
 	SW_DIR="$CACHE_ROOT/steamworks/20.1.0"
 	SW_DYLIB="$SW_DIR/libsteam_api.dylib"
 	if [ ! -f "$SW_DYLIB" ]; then
@@ -799,6 +806,8 @@ if [ "$NO_STEAM" != yes ] && [ "$ACTUAL_SHA" != "$STEAM_GOG_SHA" ] && { [ "$ACTU
 		STEAM_BUILD_ARGS=(--steam-api-dylib "$SW_DYLIB" --steam-appid "$STEAM_APPID")
 		ok "Bundling Steam launcher, Overlay hook & libsteam_api.dylib (AppID $STEAM_APPID)"
 	fi
+elif [ "$GAME_ID" = fallout3 ] && [ "$NO_STEAM" != yes ] && [ "$ACTUAL_SHA" = "$F3_STEAM_EXE_SHA256" ]; then
+	ok "Building Fallout 3 standalone offline (default; pass --with-steam for Steam Overlay)"
 fi
 
 printf '  %sCompiling translation units with Apple Clang (cached incrementally)...%s\n' "$DIM" "$RESET"

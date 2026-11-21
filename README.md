@@ -64,7 +64,7 @@ This repository adapts **[FNV-iOS-Shim](https://github.com/arjuk95-dot/FNV-iOS-S
 * The precomputed symbols cover the **GOG 1.7.0.3** installer (`setup_fallout_3_1.7.0.3_(12034).exe`) and the current **Steam 1.7.0.4** build (the 2021 patch that removed Games for Windows - LIVE). The GOTY edition bundles all five add-ons (Operation: Anchorage, The Pitt, Broken Steel, Point Lookout, Mothership Zeta).
 * Steam's **22370** is the Game of the Year Edition. **22300** is the original 2008 release, which is still listed on Steam; its executable may not match the precomputed SHA-256, in which case `quick-install.sh` falls back to full Ghidra auto-analysis.
 * Our Steam GOTY copy ships without a SteamStub `.bind` section. If yours is still packed, the installer detects the DRM and can strip it with Steamless exactly as for FNV.
-* **No achievements:** the 2021 Steam patch removed GFWL without adding Steamworks achievements (the Steam page lists only Single-player/Family Sharing), and the GOG release lists no achievements either (only cloud saves, overlay and single-player). The Steam Overlay and status integration still work.
+* **Standalone offline by default (no achievements or Steam Cloud):** the 2021 Steam patch removed GFWL without adding Steamworks achievements or Steam Cloud (the Steam page lists only Single-player/Family Sharing), and the GOG release lists no achievements either. Because of that, `quick-install.sh` builds Fallout 3 as a standalone offline app by default; pass `--with-steam` if you want the Steam Overlay (`Shift+Tab`) and playtime/status tracking.
 
 ### Fallout: New Vegas
 
@@ -173,6 +173,16 @@ Multiple game installations found:
 ```
 
 In a non-interactive shell the script stops with the same list and asks you to pass a folder or `--game`.
+
+Steam integration flags:
+
+```sh
+# Fallout: New Vegas — opt out of Steam launcher/Overlay/achievements (offline standalone)
+./quick-install.sh --no-steam
+
+# Fallout 3 — opt into Steam launcher/Overlay/playtime (standalone offline by default)
+./quick-install.sh --with-steam
+```
 
 To skip the confirmation prompt when stripping SteamStub DRM, or to wrap the app in a drag-to-Applications `.dmg`:
 
