@@ -201,13 +201,16 @@ def main():
                         str(M / 'FNVSteamLauncher.c'), '-o', str(macos_dir / launcher_name)])
             bundle_exe = launcher_name
 
-        bundle_id_prefix = 'dev.f3mac.' if args.game == 'fallout3' else 'dev.fnvmac.'
+        # a dedicated Fallout 3 identifier: macOS keys its per-app icon caches by bundle id,
+        # and the old shared dev.f3mac.game identity kept serving a stale Game Mode icon
+        bundle_id = ('dev.f3mac.fallout3' if args.game == 'fallout3'
+                     else 'dev.fnvmac.' + args.target)
         info = dict(
             CFBundleDevelopmentRegion='en',
             CFBundleExecutable=bundle_exe,
             CFBundleName=app_name,
             CFBundleDisplayName=app_name,
-            CFBundleIdentifier=bundle_id_prefix + args.target,
+            CFBundleIdentifier=bundle_id,
             CFBundlePackageType='APPL',
             CFBundleVersion=args.version,
             CFBundleShortVersionString='0.1',
