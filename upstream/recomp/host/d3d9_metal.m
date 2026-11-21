@@ -1115,9 +1115,18 @@ void d3d_backend_init(D3DState *s) {
     dev = MTLCreateSystemDefaultDevice();
     queue = [dev newCommandQueue];
     copts = [MTLCompileOptions new];
+#if defined(__MAC_15_0) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 150000
     if (@available(macOS 15.0, iOS 18.0, *)) {
         copts.mathMode = MTLMathModeSafe;
+    } else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        copts.fastMathEnabled = NO;
+#pragma clang diagnostic pop
     }
+#else
+    copts.fastMathEnabled = NO;
+#endif
 
     pipe_tab = calloc(PIPE_TAB, sizeof *pipe_tab); pipe_keep = [NSMutableArray array];
     samp_keep = [NSMutableArray array]; dss_keep = [NSMutableArray array];
@@ -1195,5 +1204,26 @@ void d3d_backend_readback(D3DState *s, uint32_t a, uint32_t b) { LOCKED_BEGIN d3
 void d3d_backend_created(uint32_t o) { LOCKED_BEGIN d3d_backend_created_impl(o); LOCKED_END }
 void d3d_backend_dirty(uint32_t o) { LOCKED_BEGIN d3d_backend_dirty_impl(o); LOCKED_END }
 void d3d_backend_release(uint32_t o) { LOCKED_BEGIN d3d_backend_release_impl(o); LOCKED_END }
-void d3d_backend_present(D3DState *s) { LOCKED_BEGIN d3d_backend_present_impl(s); LOCKED_END host_pump_events(); }
+static void pace_60fps(void) {
+    static int novsync = -1;
+    if (novsync < 0) novsync = getenv("FNV_NOVSYNC") != NULL;
+    if (novsync) return;
+    static uint64_t prev_ns;
+    const uint64_t step_ns = 16666667ull; // 60 Hz ceiling keeps Gamebryo/Havok physics & scripts stable
+    uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    if (!prev_ns) { prev_ns = now; return; }
+    uint64_t target = prev_ns + step_ns;
+    if (now < target) {
+        uint64_t rem = target - now;
+        if (rem > 1000000ull) {
+            struct timespec ts = { (time_t)((rem - 500000ull) / 1000000000ull), (long)((rem - 500000ull) % 1000000000ull) };
+            nanosleep(&ts, NULL);
+        }
+        while (clock_gettime_nsec_np(CLOCK_UPTIME_RAW) < target) {}
+        prev_ns = target;
+    } else {
+        prev_ns = now;
+    }
+}
+void d3d_backend_present(D3DState *s) { LOCKED_BEGIN d3d_backend_present_impl(s); LOCKED_END pace_60fps(); host_pump_events(); }
 void d3d_backend_resize(D3DState *s) { LOCKED_BEGIN d3d_backend_resize_impl(s); LOCKED_END }

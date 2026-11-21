@@ -131,7 +131,25 @@ static void Buf_Release(CPU *c){
 }
 COM_STUB_OK(Buf_Restore, 0)
 COM_STUB_OK(Buf_Initialize, 2)
-static void Buf_SetFX(CPU *c) { RET(c, 0, 4); }
+static void Buf_SetFX(CPU *c) {
+    uint32_t count = ARG(c, 1), results = ARG(c, 3);
+    if (results && count && count < 64) {
+        for (uint32_t i = 0; i < count; i++) P32(results + 4 * i, 3 /* DSFXR_FAILED */);
+    }
+    RET(c, count ? 0x80004005u /* DSERR_GENERIC */ : 0, 4);
+}
+static void Buf_AcquireResources(CPU *c) {
+    uint32_t count = ARG(c, 2), results = ARG(c, 3);
+    if (results && count && count < 64) {
+        for (uint32_t i = 0; i < count; i++) P32(results + 4 * i, 3 /* DSFXR_FAILED */);
+    }
+    RET(c, 0, 4);
+}
+static void Buf_GetObjectInPath(CPU *c) {
+    uint32_t ppobj = ARG(c, 4);
+    if (ppobj) P32(ppobj, 0);
+    RET(c, 0x88781161u /* DSERR_OBJECTNOTFOUND */, 5);
+}
 
 static const ComMethod buf_methods[] = {
     {"QueryInterface", Buf_QueryInterface, 2}, {"AddRef", Sound_AddRef, 0}, {"Release", Buf_Release, 0},
@@ -141,7 +159,7 @@ static const ComMethod buf_methods[] = {
     {"Play", Buf_Play, 3}, {"SetCurrentPosition", Buf_SetCurrentPosition, 1}, {"SetFormat", Buf_SetFormat, 1},
     {"SetVolume", Buf_SetVolume, 1}, {"SetPan", Buf_SetPan, 1}, {"SetFrequency", Buf_SetFrequency, 1}, {"Stop", Buf_Stop, 0},
     {"Unlock", Buf_Unlock, 4}, {"Restore", Buf_Restore, 0}, {"SetFX", Buf_SetFX, 3},
-    {"AcquireResources", NULL, 3}, {"GetObjectInPath", NULL, 4},
+    {"AcquireResources", Buf_AcquireResources, 3}, {"GetObjectInPath", Buf_GetObjectInPath, 4},
 };
 
 // IDirectSound3DBuffer / IDirectSound3DListener: positional parameters are accepted and dropped

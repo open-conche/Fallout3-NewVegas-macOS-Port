@@ -61,6 +61,7 @@ void host_thread_init(CPU *c, uint32_t stack_size) {
     P32(teb + 0x30, gpages(0x1000));           // PEB
     SETREG(c, 272, teb);                       // FS_OFFSET
     SETREG(c, R_ESP, stack + stack_size - 64);
+    { uint16_t fcw = 0x037Fu; uint32_t mxcsr = 0x1F80u; memcpy(c->r + 4256, &fcw, 2); memcpy(c->r + 4244, &mxcsr, 4); }
     if (!teb_main) teb_main = teb;
 }
 
@@ -195,11 +196,18 @@ SHIM(GetCurrentThread_) { RET(c, 0xFFFFFFFEu, 0); }
 SHIM(GetCurrentProcessId_) { RET(c, (uint32_t)getpid(), 0); }
 SHIM(GetCurrentThreadId_) { RET(c, G32(REG(c, 272) + 0x24) ? G32(REG(c, 272) + 0x24) : 1, 0); }
 SHIM(GetTickCount_) { RET(c, (uint32_t)(clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000000ull), 0); }
+static pthread_once_t qpc_once = PTHREAD_ONCE_INIT;
+static uint64_t qpc_t0_ns;
+static void qpc_init(void) { qpc_t0_ns = clock_gettime_nsec_np(CLOCK_UPTIME_RAW); }
 SHIM(QueryPerformanceCounter_) {
-    uint64_t t = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    pthread_once(&qpc_once, qpc_init);
+    uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    /* 10 MHz counter with a 60s startup bias avoids (QPC * 1e6) uint64 overflow after ~5.1h uptime
+       and keeps initial delta checks non-zero across all threads. */
+    uint64_t t = 600000000ull + (now - qpc_t0_ns) / 100ull;
     memcpy(MEM + ARG(c, 0), &t, 8); RET(c, 1, 1);
 }
-SHIM(QueryPerformanceFrequency_) { uint64_t f = 1000000000ull; memcpy(MEM + ARG(c, 0), &f, 8); RET(c, 1, 1); }
+SHIM(QueryPerformanceFrequency_) { uint64_t f = 10000000ull; memcpy(MEM + ARG(c, 0), &f, 8); RET(c, 1, 1); }
 SHIM(GetSystemTimeAsFileTime_) {
     struct timeval tv; gettimeofday(&tv, NULL);
     uint64_t ft = ((uint64_t)tv.tv_sec + 11644473600ull) * 10000000ull + (uint64_t)tv.tv_usec * 10;

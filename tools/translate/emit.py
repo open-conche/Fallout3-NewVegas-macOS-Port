@@ -363,9 +363,12 @@ class FnEmitter:
         if opc == "FLOAT2FLOAT":
             return self.wr(out, fp(fg(ins[0])))
         if opc == "TRUNC":
-            return self.wr(out, f"FTRUNC(trunc({fg(ins[0])}),{n})" if n > 8 else f"FTRUNCV(trunc({fg(ins[0])}),{n})")
+            mn = insn["m"].split()[0].upper()
+            v = fg(ins[0])
+            rfn = f"MXRND(R,{v})" if mn in ("CVTPS2DQ", "CVTPD2DQ", "CVTSS2SI", "CVTSD2SI") else f"trunc({v})"
+            return self.wr(out, f"FTRUNC({rfn},{n})" if n > 8 else f"FTRUNCV({rfn},{n})")
         if opc == "ROUND":
-            return self.wr(out, fp(f"nearbyint({fg(ins[0])})"))
+            return self.wr(out, fp(f"MXRND(R,{fg(ins[0])})"))
         if opc == "FLOAT_CEIL":
             return self.wr(out, fp(f"ceil({fg(ins[0])})"))
         if opc == "FLOAT_FLOOR":
@@ -446,7 +449,7 @@ class FnEmitter:
             return put(f"(double)SXV({self.rd(ins[0])},{n0})" if n0 <= 8 else f"(double)SX({self.rdU(ins[0])},{n0})")
         if opc == "FLOAT2FLOAT": return put(fg(ins[0]))
         if opc == "TRUNC": return self.wr(out, f"FTRUNC(trunc({fg(ins[0])}),{n})" if n > 8 else f"FTRUNCV(trunc({fg(ins[0])}),{n})")
-        if opc == "ROUND": return put(f"nearbyint({fg(ins[0])})")
+        if opc == "ROUND": return put(f"FRND(R,{fg(ins[0])})")
         if opc == "FLOAT_CEIL": return put(f"ceil({fg(ins[0])})")
         if opc == "FLOAT_FLOOR": return put(f"floor({fg(ins[0])})")
         raise Unsupported(f"float op {opc}")
@@ -564,7 +567,7 @@ class FnEmitter:
             if any(v and v[0] == "register" and v[1] <= FPUSW < v[1] + v[2] for o in insn["ops"] for v in o[2]):
                 body.append("  SYNC_FPUSW(R);")
             if mn in X87_RESET:
-                body.append("  R[REG_TOP]=0;")
+                body.append("  R[REG_TOP]=0;STV(R+4256,0x037fu,2);")
             d = top_delta(insn["m"])
             if d:
                 body.append(f"  TOPADJ(R,{d});")
