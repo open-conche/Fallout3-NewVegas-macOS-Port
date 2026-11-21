@@ -60,7 +60,7 @@ This repository adapts **[FNV-iOS-Shim](https://github.com/arjuk95-dot/FNV-iOS-S
   * **Optional Steamworks bridge & Overlay launcher (Steam builds only):** `upstream/recomp/host/shims_steam.c` loads Valve's official ARM64 `libsteam_api.dylib` (bundled only for Steam builds, omitted for GOG or `--no-steam`) to bridge `steam_api.dll` (`__thiscall` proxies for `ISteamUser`, `ISteamUtils`, `ISteamUserStats`, `ISteamApps`, and `ISteamFriends`, plus `SteamAPI_ManualDispatch_*` callbacks) for Steam achievements and status, with clean offline fallback. `macos/FNVSteamLauncher.c` starts the Mac Steam client silently (`-silent`), waits for global user login (`ConnectToGlobalUser`) before launching the game, and injects `gameoverlayrenderer.dylib` for the Metal Steam Overlay (`Shift+Tab`) and, where the game exposes Steamworks (Fallout: New Vegas), achievement notifications. The launcher takes the target executable and AppID from the build (`FalloutNewVegas`/22380 for FNV, `Fallout3`/22370 for Fallout 3).
   * **Fallout 3 specifics:** per-game title, save/log directories, and a `plugins.txt` bootstrap seeded from `Data/DLCList.txt` so all five GOTY add-ons load; xlive (Games for Windows - LIVE) stubs for the GOG build and winsock offline stubs for both; per-game `.icns` icons (`macos/Assets/AppIcon.png` for FNV, `macos/Assets/AppIcon-Fallout3.png` for Fallout 3).
   * **User data outside the bundle (`FNV_USER_DIR`):** updates in `upstream/recomp/host/shims_files.c` and `shims_win.c` (`SHGetFolderPathA`) route `UserDocuments` (saves, `FALLOUT.INI`, `FalloutPrefs.ini`) to `~/Library/Application Support/FalloutNV/UserDocuments` or `~/Library/Application Support/Fallout3/UserDocuments`, with logs in `~/Library/Logs/FalloutNV/fnv.log` or `~/Library/Logs/Fallout3/fallout3.log`.
-  * **macOS 14+ Metal compatibility (`d3d9_metal.m`):** guarded `copts.mathMode = MTLMathModeSafe` with `@available(macOS 15.0, iOS 18.0, *)` so the port builds and runs cleanly on macOS 14 (Sonoma) and newer.
+  * **macOS 14+ Metal compatibility (`d3d9_metal.m`):** guarded `copts.mathMode = MTLMathModeSafe` with compile-time SDK and runtime `@available(macOS 15.0, iOS 18.0, *)` checks (falling back to `copts.fastMathEnabled = NO`) so the port builds and runs cleanly on macOS 14 (Sonoma) and newer.
   * **Build & test suite updates (`tools/build.py`, `tools/app_icon.py`, `tests/`):** updated build scripts and native/host test suite for the macOS target; `tools/build.py --game fallout3` selects the Fallout 3 profile (bundle identifier `dev.f3mac.fallout3`, executable name, define, icon).
 
 ---
@@ -202,6 +202,41 @@ To skip the confirmation prompt when stripping SteamStub DRM, or to wrap the app
 ```
 
 > **Note on disk usage & source cleanup:** to avoid duplicating roughly 9–10 GB per game, `quick-install.sh` **moves** the playable game files into `~/Applications/Fallout 3.app` or `~/Applications/Fallout New Vegas.app` (`Contents/Resources/GameData/`), and then **deletes the leftover Windows-only files** from the source game folder (extracted GOG folders, Steam `steamapps/common/` folders, or DepotDownloader folders). For Steam installs, it also removes the matching `appmanifest_<appid>.acf` so Steam does not keep an uninstallable ghost entry in your Mac library (Steam achievements, Overlay, playtime, and "Playing" status do not depend on the `.acf` file). Original GOG offline installers (`setup_*.exe` + `.bin`) and existing `.app` bundles are **not** deleted automatically.
+
+---
+
+## Notes on Cleanup
+
+**None of the build tools are needed to play the game once the `.app` is built.** `libunicorn.a` is statically linked into the app binary, `.bik` cutscenes are already converted to `.mp4`, and Ghidra only runs during translation.
+
+`quick-install.sh` intentionally does **not** uninstall global software from your Mac. If you installed these tools only for this port and want to reclaim disk space, here is everything that may have been installed or cached and how to remove it:
+
+1. **Homebrew packages used for building/downloading** (edit the list to omit any tool you want to keep, e.g. `ffmpeg` or `cmake`; missing packages are skipped cleanly and Homebrew automatically removes unused dependencies like OpenJDK):
+   ```sh
+   for p in ghidra unicorn cmake ffmpeg mono innoextract depotdownloader steamcmd; do brew list "$p" &>/dev/null && brew uninstall "$p"; done
+   ```
+   Optional: if you added the DepotDownloader tap or want to clear Homebrew's download cache:
+   ```sh
+   brew untap steamre/tools 2>/dev/null; brew cleanup
+   ```
+
+2. **Build & translation cache** (safe to delete once you have tested the `.app`; only makes a future rebuild slower):
+   ```sh
+   rm -rf ~/Library/Caches/fnv-macos
+   ```
+
+3. **Original GOG offline installers** in `~/Downloads/` (`setup_fallout_*.exe` and `.bin` parts), if you do not need to keep a backup.
+
+4. **Homebrew & Apple Command Line Tools (optional — only if you installed them solely for this port):**
+   * Uninstall Homebrew using the [official Homebrew uninstall script](https://github.com/homebrew/install#uninstall-homebrew).
+   * Uninstall Apple Command Line Tools:
+     ```sh
+     sudo rm -rf /Library/Developer/CommandLineTools
+     ```
+
+**Keep these files to continue playing:**
+* `~/Applications/Fallout 3.app` and/or `~/Applications/Fallout New Vegas.app` (the game itself).
+* `~/Library/Application Support/Fallout3/` and/or `~/Library/Application Support/FalloutNV/` (saves and `.ini` settings).
 
 ---
 
