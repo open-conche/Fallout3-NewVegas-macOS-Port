@@ -57,14 +57,14 @@ BAR_WIDTH=24
 
 banner() {
 	printf '\n'
-	printf '  %s███████╗███╗   ██╗██╗   ██╗   ███╗   ███╗ █████╗  ██████╗%s\n' "$G1" "$RESET"
-	printf '  %s██╔════╝████╗  ██║██║   ██║   ████╗ ████║██╔══██╗██╔════╝%s\n' "$G2" "$RESET"
-	printf '  %s█████╗  ██╔██╗ ██║██║   ██║   ██╔████╔██║███████║██║     %s\n' "$G3" "$RESET"
-	printf '  %s██╔══╝  ██║╚██╗██║╚██╗ ██╔╝   ██║╚██╔╝██║██╔══██║██║     %s\n' "$G4" "$RESET"
-	printf '  %s██║     ██║ ╚████║ ╚████╔╝    ██║ ╚═╝ ██║██║  ██║╚██████╗%s\n' "$G5" "$RESET"
-	printf '  %s╚═╝     ╚═╝  ╚═══╝  ╚═══╝     ╚═╝     ╚═╝╚═╝  ╚═╝ ╚═════╝%s\n' "$G5" "$RESET"
+	printf '  %s███████╗ █████╗ ██╗     ██╗      ██████╗ ██╗   ██╗████████╗%s\n' "$G1" "$RESET"
+	printf '  %s██╔════╝██╔══██╗██║     ██║     ██╔═══██╗██║   ██║╚══██╔══╝%s\n' "$G2" "$RESET"
+	printf '  %s█████╗  ███████║██║     ██║     ██║   ██║██║   ██║   ██║   %s\n' "$G3" "$RESET"
+	printf '  %s██╔══╝  ██╔══██║██║     ██║     ██║   ██║██║   ██║   ██║   %s\n' "$G4" "$RESET"
+	printf '  %s██║     ██║  ██║███████╗███████╗╚██████╔╝╚██████╔╝   ██║   %s\n' "$G5" "$RESET"
+	printf '  %s╚═╝     ╚═╝  ╚═╝╚══════╝╚══════╝ ╚═════╝  ╚═════╝    ╚═╝   %s\n' "$G5" "$RESET"
 	printf '\n'
-	printf '  %sFallout: New Vegas & Fallout 3 · Metal · Apple Silicon%s\n' "$DIM" "$RESET"
+	printf '  %sFallout 3 & Fallout: New Vegas · Metal · Apple Silicon%s\n' "$DIM" "$RESET"
 	printf '\n'
 }
 
