@@ -5,7 +5,7 @@
 # or Fallout 3 (GOG or Steam) into a standalone Apple Silicon macOS bundle
 # ("Fallout New Vegas.app" or "Fallout 3.app").
 #
-# Usage: quick-install.sh [--game fnv|fallout3] [--dmg] [--keep-ghidra] [--unpack-drm] [--no-steam] [--with-steam] [game_files_dir]
+# Usage: quick-install.sh [--game fnv|fallout3] [--dmg] [--keep-ghidra] [--unpack-drm] [--no-steam] [--with-steam] [game_path]
 #   --game <id>      select game explicitly: fnv or fallout3 (default: auto-detect;
 #                    a numbered menu appears when several installations are found)
 #   --dmg            also wrap the app in "<App Name>.dmg"
@@ -13,8 +13,8 @@
 #   --unpack-drm     unattended: allow downloading Steamless + Mono to strip SteamStub DRM
 #   --no-steam       keep Steam builds in offline mode (skip Steam launcher, overlay & libsteam_api.dylib; already default for Fallout 3)
 #   --with-steam     opt into Steam launcher & Overlay for Fallout 3 Steam builds (off by default)
-#   game_files_dir   optional folder containing FalloutNV.exe/Fallout3.exe and Data/
-#                    or an existing app bundle.
+#   game_path        optional GOG installer (.exe), folder containing FalloutNV.exe/Fallout3.exe
+#                    and Data/, or an existing app bundle.
 set -euo pipefail
 
 GOG_EXE_SHA256="89e7020487e80f20ddc92ea641c4433b2c6839a82f45a076e414d167d11dd0fe"
@@ -243,23 +243,24 @@ step "Locating game files (Fallout: New Vegas or Fallout 3)"
 MATCHES=()
 MATCH_KEYS=()
 add_match() {
-	local game="$1" dir="$2" key existing
+	local game="$1" kind="$2" path="$3" key existing
 	# deduplicate by device+inode: APFS is case-insensitive, so "Fallout 3" and "fallout 3"
-	# resolve to the same installation
-	key="$(cd "$dir" 2>/dev/null && stat -f '%d:%i' .)" || return 0
+	# resolve to the same installation or installer file
+	key="$(stat -f '%d:%i' "$path" 2>/dev/null)" || return 0
 	[ -n "$key" ] || return 0
-	key="$game|$key"
+	key="$game|$kind|$key"
 	for existing in "${MATCH_KEYS[@]+"${MATCH_KEYS[@]}"}"; do
 		[ "$existing" = "$key" ] && return 0
 	done
 	MATCH_KEYS+=("$key")
-	MATCHES+=("$game|$dir")
+	MATCHES+=("$game|$kind|$path")
 }
 
 game_display_name() {
 	case "$1" in
 		fallout3) echo "Fallout 3: Game of the Year Edition" ;;
-		*) echo "Fallout: New Vegas" ;;
+		fnv) echo "Fallout: New Vegas" ;;
+		*) echo "Fallout (auto-detect)" ;;
 	esac
 }
 
@@ -283,6 +284,23 @@ game_channel() {
 	echo "DRM-free"
 }
 
+scan_gog_installers_in_dir() {
+	local dir="${1%/}" f
+	[ -d "$dir" ] || return 0
+	shopt -s nullglob nocaseglob
+	if [ -z "$GAME_ID" ] || [ "$GAME_ID" = fallout3 ]; then
+		for f in "$dir"/setup_fallout_3_*.exe; do
+			[ -f "$f" ] && add_match fallout3 gog_installer "$f"
+		done
+	fi
+	if [ -z "$GAME_ID" ] || [ "$GAME_ID" = fnv ]; then
+		for f in "$dir"/setup_fallout_new_vegas_*.exe; do
+			[ -f "$f" ] && add_match fnv gog_installer "$f"
+		done
+	fi
+	shopt -u nullglob nocaseglob
+}
+
 # Collect every installation under one root instead of stopping at the first, so a folder that
 # contains both games (or several copies) can be offered as a choice.
 scan_game_root() {
@@ -304,18 +322,43 @@ scan_game_root() {
 			"$root/Contents/Resources/GameData"; do
 			[ -d "$dir" ] || continue
 			if { [ -z "$GAME_ID" ] || [ "$GAME_ID" = fnv ]; } && [ -f "$dir/FalloutNV.exe" ] && [ -f "$dir/Data/FalloutNV.esm" ]; then
-				add_match fnv "$dir"
+				add_match fnv dir "$dir"
 			fi
 			if { [ -z "$GAME_ID" ] || [ "$GAME_ID" = fallout3 ]; } && [ -f "$dir/Fallout3.exe" ] && [ -f "$dir/Data/Fallout3.esm" ]; then
-				add_match fallout3 "$dir"
+				add_match fallout3 dir "$dir"
 			fi
 		done
 	done
 }
 
 if [ -n "$GAME_ARG" ]; then
-	scan_game_root "$GAME_ARG"
-	[ ${#MATCHES[@]} -gt 0 ] || die "Could not find FalloutNV.exe + Data/FalloutNV.esm or Fallout3.exe + Data/Fallout3.esm in: $GAME_ARG"
+	if [ -f "$GAME_ARG" ]; then
+		base_lc="$(basename "$GAME_ARG" | tr '[:upper:]' '[:lower:]')"
+		case "$base_lc" in
+			falloutnv.exe|fallout3.exe)
+				scan_game_root "$(dirname "$GAME_ARG")"
+				;;
+			*.exe)
+				detected_game="${GAME_ID:-}"
+				if [ -z "$detected_game" ]; then
+					case "$base_lc" in
+						*fallout*3*) detected_game="fallout3" ;;
+						*new*vegas*|*fnv*) detected_game="fnv" ;;
+						*) detected_game="auto" ;;
+					esac
+				fi
+				add_match "$detected_game" gog_installer "$GAME_ARG"
+				;;
+			*)
+				die "Unsupported file: $GAME_ARG" \
+					"Pass a GOG setup_*.exe installer or a folder containing FalloutNV.exe/Fallout3.exe and Data/."
+				;;
+		esac
+	else
+		scan_game_root "$GAME_ARG"
+		scan_gog_installers_in_dir "$GAME_ARG"
+	fi
+	[ ${#MATCHES[@]} -gt 0 ] || die "Could not find a GOG installer or FalloutNV.exe/Fallout3.exe + Data/ in: $GAME_ARG"
 else
 	CANDIDATES=()
 	if [ -z "$GAME_ID" ] || [ "$GAME_ID" = fnv ]; then
@@ -371,12 +414,15 @@ else
 	for candidate in "${CANDIDATES[@]}"; do
 		scan_game_root "$candidate"
 	done
+	for gog_dir in "$HOME/Downloads" "$HOME/Games" "$HOME/Documents" "$HOME/Desktop"; do
+		scan_gog_installers_in_dir "$gog_dir"
+	done
 fi
 
-[ ${#MATCHES[@]} -gt 0 ] || die "Game folder not found (Fallout: New Vegas or Fallout 3)." \
-	"Pass the path to your game folder (containing FalloutNV.exe or Fallout3.exe and Data/):" \
-	"  ./quick-install.sh ~/Downloads/\"Fallout New Vegas\"" \
-	"  ./quick-install.sh --game fallout3 ~/Downloads/\"Fallout 3\""
+[ ${#MATCHES[@]} -gt 0 ] || die "Game files or GOG installer not found (Fallout: New Vegas or Fallout 3)." \
+	"Pass the path to your GOG setup_*.exe installer or game folder:" \
+	"  ./quick-install.sh ~/Downloads/setup_fallout_3_*.exe" \
+	"  ./quick-install.sh ~/Downloads/\"Fallout New Vegas\""
 
 if [ ${#MATCHES[@]} -eq 1 ]; then
 	RESOLVED="${MATCHES[0]}"
@@ -384,8 +430,14 @@ else
 	OPTIONS=()
 	for match in "${MATCHES[@]}"; do
 		match_game="${match%%|*}"
-		match_dir="${match#*|}"
-		OPTIONS+=("$(game_display_name "$match_game") ($(game_channel "$match_dir")) — $match_dir")
+		match_rest="${match#*|}"
+		match_kind="${match_rest%%|*}"
+		match_path="${match_rest#*|}"
+		if [ "$match_kind" = gog_installer ]; then
+			OPTIONS+=("$(game_display_name "$match_game") (GOG installer) — $match_path")
+		else
+			OPTIONS+=("$(game_display_name "$match_game") ($(game_channel "$match_path")) — $match_path")
+		fi
 	done
 	if [ -t 0 ]; then
 		printf '\n%sMultiple game installations found:%s\n' "$BOLD" "$RESET"
@@ -404,12 +456,51 @@ else
 		fi
 		RESOLVED="${MATCHES[$((REPLY - 1))]}"
 	else
-		die "Multiple game installations found; pass the folder to use or --game fnv|fallout3." "${OPTIONS[@]}"
+		die "Multiple game installations found; pass the folder/installer to use or --game fnv|fallout3." "${OPTIONS[@]}"
 	fi
 fi
 
 GAME_ID="${RESOLVED%%|*}"
-ASSET_SRC="${RESOLVED#*|}"
+RESOLVED_REST="${RESOLVED#*|}"
+MATCH_KIND="${RESOLVED_REST%%|*}"
+ASSET_SRC="${RESOLVED_REST#*|}"
+SOURCE_IS_TMP_EXTRACT=no
+GOG_INSTALLER_PATH=""
+
+if [ "$MATCH_KIND" = gog_installer ]; then
+	GOG_INSTALLER_PATH="$ASSET_SRC"
+	ok "Found GOG installer: $GOG_INSTALLER_PATH"
+	if ! command -v innoextract >/dev/null 2>&1; then
+		command -v brew >/dev/null 2>&1 || die "Homebrew is required to install innoextract for GOG installers." \
+			"Install Homebrew from https://brew.sh and re-run this script."
+		run_task "Installing innoextract via Homebrew" brew install innoextract
+	fi
+	GOG_OUT="$TMP/gog-extract"
+	GOG_LOG="$TMP/innoextract.log"
+	mkdir -p "$GOG_OUT"
+	if ! run_task "Extracting GOG installer (skipping Windows redistributables)" \
+		bash -c 'innoextract --exclude-temp --silent --progress=0 -d "$1" "$2" >"$3" 2>&1' _ \
+		"$GOG_OUT" "$GOG_INSTALLER_PATH" "$GOG_LOG"; then
+		cat "$GOG_LOG" >&2 || true
+		die "innoextract failed to extract: $GOG_INSTALLER_PATH" \
+			"Make sure all .bin parts of the GOG installer sit in the same folder as the .exe."
+	fi
+	ASSET_SRC=""
+	for cand in "$GOG_OUT/app" "$GOG_OUT"; do
+		if { [ "$GAME_ID" = auto ] || [ "$GAME_ID" = fallout3 ]; } && [ -f "$cand/Fallout3.exe" ] && [ -f "$cand/Data/Fallout3.esm" ]; then
+			GAME_ID="fallout3"
+			ASSET_SRC="$cand"
+			break
+		fi
+		if { [ "$GAME_ID" = auto ] || [ "$GAME_ID" = fnv ]; } && [ -f "$cand/FalloutNV.exe" ] && [ -f "$cand/Data/FalloutNV.esm" ]; then
+			GAME_ID="fnv"
+			ASSET_SRC="$cand"
+			break
+		fi
+	done
+	[ -n "$ASSET_SRC" ] || die "Extracted GOG installer did not contain Fallout3.exe or FalloutNV.exe + Data/."
+	SOURCE_IS_TMP_EXTRACT=yes
+fi
 
 if [ "$GAME_ID" = fallout3 ]; then
 	GAME_LABEL="Fallout 3"
@@ -895,15 +986,88 @@ sign_bundle() {
 }
 run_task "Ad-hoc signing $APP_NAME.app" sign_bundle || die "Code signing failed"
 
+is_protected_dir() {
+	local p="${1%/}"
+	case "$p" in
+		""|/|/Applications|/Users|"$HOME"|"$HOME/Applications"|"$HOME/Desktop"|"$HOME/Documents"|"$HOME/Downloads"|"$HOME/Games"|"$HOME/Library"|/tmp|/var/tmp)
+			return 0 ;;
+	esac
+	return 1
+}
+
+cleanup_source_leftovers() {
+	[ "$SOURCE_IS_TMP_EXTRACT" = yes ] && return 0
+	local src="${ASSET_SRC%/}"
+	[ -d "$src" ] || return 0
+
+	# Never delete an existing .app bundle when rebuilding from it
+	case "$src" in
+		*/Contents/Resources/GameData) return 0 ;;
+	esac
+
+	# Remove matching Steam appmanifest_<appid>.acf if source was a Steam steamapps/common folder
+	case "$src" in
+		*/steamapps/common/*)
+			local steamapps_dir game_folder appids aid acf
+			steamapps_dir="$(dirname "$(dirname "$src")")"
+			game_folder="$(basename "$src")"
+			if [ "$GAME_ID" = fallout3 ]; then
+				appids="22370 22300"
+			else
+				appids="22380 22490"
+			fi
+			for aid in $appids; do
+				acf="$steamapps_dir/appmanifest_${aid}.acf"
+				if [ -f "$acf" ] && grep -Fqi "\"$game_folder\"" "$acf" 2>/dev/null; then
+					rm -f "$acf"
+					ok "Removed Steam manifest $(basename "$acf")"
+				fi
+			done
+			;;
+	esac
+
+	# If source is an innoextract app/ folder, clean app/ + sibling tmp/ (or the dedicated parent folder)
+	if [ "$(basename "$src")" = "app" ]; then
+		local parent="$(dirname "$src")"
+		if is_protected_dir "$parent"; then
+			rm -rf "$src"
+			if [ -d "$parent/tmp" ] && { [ -f "$parent/tmp/InnoCallback.dll" ] || [ -f "$parent/tmp/gog.ico" ] || [ -f "$parent/tmp/GOG.png" ]; }; then
+				rm -rf "$parent/tmp"
+			fi
+			ok "Cleaned leftover extracted files from $src"
+		else
+			rm -rf "$parent"
+			ok "Cleaned leftover extracted folder: $parent"
+		fi
+		return 0
+	fi
+
+	if ! is_protected_dir "$src"; then
+		rm -rf "$src"
+		ok "Cleaned leftover source folder: $src"
+		case "$src" in
+			*/depots/*/*)
+				rmdir "$(dirname "$src")" 2>/dev/null || true
+				rmdir "$(dirname "$(dirname "$src")")" 2>/dev/null || true
+				;;
+		esac
+	fi
+}
+
 mkdir -p "$DEST_DIR"
 if [ "$WANT_DMG" = no ]; then
 	rm -rf "$DEST_DIR/$APP_NAME.app"
 	mv "$APP" "$DEST_DIR/$APP_NAME.app"
 	GDATA=""
+	cleanup_source_leftovers
 	ok "Placed $APP_NAME.app in $DEST_DIR"
 	printf '\n%s✔ Done!%s %s is ready.\n' "$GREEN$BOLD" "$RESET" "$DEST_DIR/$APP_NAME.app"
 	printf '  Double-click it in Applications (or Launchpad/Spotlight) to play.\n'
-	printf '  Saves & INIs live in ~/Library/Application Support/%s/\n\n' "$GAME_SUPPORT_DIR"
+	printf '  Saves & INIs live in ~/Library/Application Support/%s/\n' "$GAME_SUPPORT_DIR"
+	if [ -n "$GOG_INSTALLER_PATH" ]; then
+		printf '  Original GOG installer files in %s were kept (safe to delete if you do not need a backup).\n' "$(dirname "$GOG_INSTALLER_PATH")"
+	fi
+	printf '\n'
 	open -R "$DEST_DIR/$APP_NAME.app" 2>/dev/null || true
 	exit 0
 fi
@@ -918,5 +1082,9 @@ run_task "Creating disk image" hdiutil create -srcfolder "$STAGE" -volname "$VOL
 rm -f "$DEST_DIR/$APP_NAME.dmg"
 run_task "Compressing disk image" hdiutil convert "$TMPDMG" -format UDZO -imagekey zlib-level=9 -o "$DEST_DIR/$APP_NAME.dmg" >/dev/null
 GDATA=""
+cleanup_source_leftovers
 ok "Created $DEST_DIR/$APP_NAME.dmg"
+if [ -n "$GOG_INSTALLER_PATH" ]; then
+	printf '  Original GOG installer files in %s were kept (safe to delete if you do not need a backup).\n' "$(dirname "$GOG_INSTALLER_PATH")"
+fi
 open -R "$DEST_DIR/$APP_NAME.dmg" 2>/dev/null || true
