@@ -64,7 +64,7 @@ This repository adapts **[FNV-iOS-Shim](https://github.com/arjuk95-dot/FNV-iOS-S
 * The precomputed symbols cover the **GOG 1.7.0.3** installer (`setup_fallout_3_1.7.0.3_(12034).exe`) and the current **Steam 1.7.0.4** build (the 2021 patch that removed Games for Windows - LIVE). The GOTY edition bundles all five add-ons (Operation: Anchorage, The Pitt, Broken Steel, Point Lookout, Mothership Zeta).
 * Steam's **22370** is the Game of the Year Edition. **22300** is the original 2008 release, which is still listed on Steam; its executable may not match the precomputed SHA-256, in which case `quick-install.sh` falls back to full Ghidra auto-analysis.
 * Our Steam GOTY copy ships without a SteamStub `.bind` section. If yours is still packed, the installer detects the DRM and can strip it with Steamless exactly as for FNV.
-* **No Steam achievements:** the 2021 Steam patch removed GFWL and no Steamworks achievements were added (the store page lists only Single-player/Family Sharing). The Steam Overlay and status integration still work.
+* **No achievements:** the 2021 Steam patch removed GFWL without adding Steamworks achievements (the Steam page lists only Single-player/Family Sharing), and the GOG release lists no achievements either (only cloud saves, overlay and single-player). The Steam Overlay and status integration still work.
 
 ### Fallout: New Vegas
 
@@ -74,9 +74,9 @@ This repository adapts **[FNV-iOS-Shim](https://github.com/arjuk95-dot/FNV-iOS-S
 | **Steam** (after Steamless) | `FalloutNV.exe` | `19406942e48724d797300c4ea6be9ac69a32f670b8c35db09279a2258422739f` | `symbols/fnv-steam/` |
 | **Steam** (original, SteamStub v2.1) | `FalloutNV.exe` | `3a87f92f011e5dc9179ddf733cf08be2b39ea6e5b7a8a9e3a9a72dafcc1b104d` | strip first |
 
-* GOG builds launch `FalloutNewVegas` directly and completely standalone — no Steam launch, no Steam Overlay, and no `libsteam_api.dylib`.
+* GOG builds launch `FalloutNewVegas` directly and completely standalone — no Steam launch, no Steam Overlay, and no `libsteam_api.dylib`. GOG Galaxy achievements/cloud saves are not implemented in this port, so achievements are available in the Steam build only.
 * For Steam builds, when `quick-install.sh` detects SteamStub DRM it warns you and asks for confirmation (or pass `--unpack-drm`) to automatically install `mono` (via Homebrew if missing), download the official [Steamless](https://github.com/atom0s/Steamless) CLI release (`v3.1.0.5`, verified by SHA-256), back up the original file to `FalloutNV.exe.og`, strip the DRM, and compile using `symbols/fnv-steam/`.
-* **Steam Achievements & Overlay:** `quick-install.sh` fetches Valve's official ARM64 `libsteam_api.dylib` (from Steamworks.NET 20.1.0, verified by SHA-256) into `Contents/Frameworks/` and bundles `FalloutNewVegasLauncher` so double-clicking `Fallout New Vegas.app` automatically starts the Mac Steam client (if installed) and enables achievements, Steam status, and the Steam Overlay (`Shift+Tab`). Pass `--no-steam` at build time to omit Steam integration, or set `FNV_STEAM_NO_OVERLAY=1` / `FNV_STEAM_DISABLE=1` at runtime.
+* **Steam Achievements & Overlay:** `quick-install.sh` fetches Valve's official ARM64 `libsteam_api.dylib` (from Steamworks.NET 20.1.0, verified by SHA-256) into `Contents/Frameworks/` and bundles `FalloutNewVegasLauncher` so double-clicking `Fallout New Vegas.app` automatically starts the Mac Steam client (if installed) and enables the game's **75 Steam achievements** (base game + DLC), Steam status, and the Steam Overlay (`Shift+Tab`). Pass `--no-steam` at build time to omit Steam integration, or set `FNV_STEAM_NO_OVERLAY=1` / `FNV_STEAM_DISABLE=1` at runtime.
 * **Epic Games Store / other DRM-free builds:** if the SHA-256 differs from the GOG and Steam builds above, `quick-install.sh` automatically falls back to full Ghidra auto-analysis (slower, and unsupported builds may require address adjustments if the binary layout differs).
 
 ---
