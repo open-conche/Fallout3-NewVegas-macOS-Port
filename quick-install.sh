@@ -6,7 +6,8 @@
 # ("Fallout New Vegas.app" or "Fallout 3.app").
 #
 # Usage: quick-install.sh [--game fnv|fallout3] [--dmg] [--keep-ghidra] [--unpack-drm] [--no-steam] [game_files_dir]
-#   --game <id>      select game explicitly: fnv or fallout3 (default: auto-detect)
+#   --game <id>      select game explicitly: fnv or fallout3 (default: auto-detect;
+#                    a numbered menu appears when several installations are found)
 #   --dmg            also wrap the app in "<App Name>.dmg"
 #   --keep-ghidra    keep the Ghidra project and P-code JSONL after translation
 #   --unpack-drm     unattended: allow downloading Steamless + Mono to strip SteamStub DRM
@@ -236,7 +237,52 @@ trap cleanup EXIT
 # ---------------------------------------------------------------------------
 step "Locating game files (Fallout: New Vegas or Fallout 3)"
 
-resolve_game_dir() {
+MATCHES=()
+MATCH_KEYS=()
+add_match() {
+	local game="$1" dir="$2" key existing
+	# deduplicate by device+inode: APFS is case-insensitive, so "Fallout 3" and "fallout 3"
+	# resolve to the same installation
+	key="$(cd "$dir" 2>/dev/null && stat -f '%d:%i' .)" || return 0
+	[ -n "$key" ] || return 0
+	key="$game|$key"
+	for existing in "${MATCH_KEYS[@]+"${MATCH_KEYS[@]}"}"; do
+		[ "$existing" = "$key" ] && return 0
+	done
+	MATCH_KEYS+=("$key")
+	MATCHES+=("$game|$dir")
+}
+
+game_display_name() {
+	case "$1" in
+		fallout3) echo "Fallout 3: Game of the Year Edition" ;;
+		*) echo "Fallout: New Vegas" ;;
+	esac
+}
+
+game_channel() {
+	local dir="${1%/}" app_root
+	case "$dir" in
+		*/steamapps/common/*|*/Steam/steamapps/*|*/depots/22380*|*/depots/22490*|*/depots/22370*|*/depots/22300*)
+			echo "Steam"; return ;;
+	esac
+	case "$dir" in
+		*/Contents/Resources/GameData)
+			app_root="${dir%/Contents/Resources/GameData}"
+			if [ -f "$app_root/Contents/MacOS/steam_appid.txt" ] || [ -f "$app_root/Contents/Frameworks/libsteam_api.dylib" ]; then
+				echo "Steam"; return
+			fi
+			;;
+	esac
+	if compgen -G "$dir/goggame-*.info" >/dev/null 2>&1 || compgen -G "$dir/goggame-*.hashdb" >/dev/null 2>&1; then
+		echo "GOG"; return
+	fi
+	echo "DRM-free"
+}
+
+# Collect every installation under one root instead of stopping at the first, so a folder that
+# contains both games (or several copies) can be offered as a choice.
+scan_game_root() {
 	local base="${1%/}" root dir
 	for root in "$base" "$base.app"; do
 		for dir in \
@@ -253,24 +299,20 @@ resolve_game_dir() {
 			"$root/steamapps/common/Fallout 3 goty" \
 			"$root/steamapps/common/Fallout 3" \
 			"$root/Contents/Resources/GameData"; do
+			[ -d "$dir" ] || continue
 			if { [ -z "$GAME_ID" ] || [ "$GAME_ID" = fnv ]; } && [ -f "$dir/FalloutNV.exe" ] && [ -f "$dir/Data/FalloutNV.esm" ]; then
-				echo "fnv|$dir"
-				return 0
+				add_match fnv "$dir"
 			fi
 			if { [ -z "$GAME_ID" ] || [ "$GAME_ID" = fallout3 ]; } && [ -f "$dir/Fallout3.exe" ] && [ -f "$dir/Data/Fallout3.esm" ]; then
-				echo "fallout3|$dir"
-				return 0
+				add_match fallout3 "$dir"
 			fi
 		done
 	done
-	return 1
 }
 
-RESOLVED=""
-ASSET_SRC=""
 if [ -n "$GAME_ARG" ]; then
-	RESOLVED="$(resolve_game_dir "$GAME_ARG" || true)"
-	[ -n "$RESOLVED" ] || die "Could not find FalloutNV.exe + Data/FalloutNV.esm or Fallout3.exe + Data/Fallout3.esm in: $GAME_ARG"
+	scan_game_root "$GAME_ARG"
+	[ ${#MATCHES[@]} -gt 0 ] || die "Could not find FalloutNV.exe + Data/FalloutNV.esm or Fallout3.exe + Data/Fallout3.esm in: $GAME_ARG"
 else
 	CANDIDATES=()
 	if [ -z "$GAME_ID" ] || [ "$GAME_ID" = fnv ]; then
@@ -304,9 +346,11 @@ else
 			"$HOME/Downloads/Fallout 3.app"
 			"$HOME/Downloads/Fallout 3"
 			"$HOME/Downloads/fallout 3"
+			"$HOME/Downloads/app"
 			"$HOME/Downloads/Fallout 3 goty"
 			"$HOME/Downloads/Fallout 3 GOTY"
 			"$HOME/Games/Fallout 3"
+			"$HOME/Games/Fallout 3 GOTY"
 			"$HOME/Library/Application Support/Steam/steamapps/common/Fallout 3 goty"
 			"$HOME/Library/Application Support/Steam/steamapps/common/Fallout 3"
 			"$HOME/Steam/steamapps/common/Fallout 3 goty"
@@ -316,19 +360,50 @@ else
 		CANDIDATES+=(
 			"$HOME"/Downloads/depots/22370/*
 			"$HOME"/depots/22370/*
+			"$HOME"/Downloads/depots/22300/*
+			"$HOME"/depots/22300/*
 		)
 		shopt -u nullglob
 	fi
 	for candidate in "${CANDIDATES[@]}"; do
-		RESOLVED="$(resolve_game_dir "$candidate" || true)"
-		[ -n "$RESOLVED" ] && break
+		scan_game_root "$candidate"
 	done
 fi
 
-[ -n "$RESOLVED" ] || die "Game folder not found (Fallout: New Vegas or Fallout 3)." \
+[ ${#MATCHES[@]} -gt 0 ] || die "Game folder not found (Fallout: New Vegas or Fallout 3)." \
 	"Pass the path to your game folder (containing FalloutNV.exe or Fallout3.exe and Data/):" \
 	"  ./quick-install.sh ~/Downloads/\"Fallout New Vegas\"" \
 	"  ./quick-install.sh --game fallout3 ~/Downloads/\"Fallout 3\""
+
+if [ ${#MATCHES[@]} -eq 1 ]; then
+	RESOLVED="${MATCHES[0]}"
+else
+	OPTIONS=()
+	for match in "${MATCHES[@]}"; do
+		match_game="${match%%|*}"
+		match_dir="${match#*|}"
+		OPTIONS+=("$(game_display_name "$match_game") ($(game_channel "$match_dir")) — $match_dir")
+	done
+	if [ -t 0 ]; then
+		printf '\n%sMultiple game installations found:%s\n' "$BOLD" "$RESET"
+		menu_index=1
+		for option in "${OPTIONS[@]}"; do
+			printf '  %s%d)%s %s\n' "$GOLD" "$menu_index" "$RESET" "$option"
+			menu_index=$((menu_index + 1))
+		done
+		printf '  Select the game to build [1-%d]: ' "${#OPTIONS[@]}"
+		read -r REPLY
+		case "$REPLY" in
+			''|*[!0-9]*) die "Invalid selection: '$REPLY'." ;;
+		esac
+		if [ "$REPLY" -lt 1 ] || [ "$REPLY" -gt "${#OPTIONS[@]}" ]; then
+			die "Selection out of range: $REPLY"
+		fi
+		RESOLVED="${MATCHES[$((REPLY - 1))]}"
+	else
+		die "Multiple game installations found; pass the folder to use or --game fnv|fallout3." "${OPTIONS[@]}"
+	fi
+fi
 
 GAME_ID="${RESOLVED%%|*}"
 ASSET_SRC="${RESOLVED#*|}"
