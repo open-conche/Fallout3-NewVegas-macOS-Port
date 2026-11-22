@@ -7,6 +7,7 @@
 #include <fnmatch.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include "shims.h"
@@ -106,9 +107,10 @@ static int trace_files(void) { static int t = -1; if (t < 0) t = getenv("FNV_TRA
 // drops the slot's reference; the descriptor is closed when the last one goes, so a read racing a
 // close on another thread finishes on its own file instead of on whatever file reuses the fd number.
 typedef struct { int fd; int refs; } FileObj;
+static int files_open;                             // descriptors held by file objects (for the failure log)
 static void file_ref(void *obj) { __atomic_fetch_add(&((FileObj *)obj)->refs, 1, __ATOMIC_RELAXED); }
 static void file_put(FileObj *f) {
-    if (f && __atomic_sub_fetch(&f->refs, 1, __ATOMIC_ACQ_REL) == 0) { close(f->fd); free(f); }
+    if (f && __atomic_sub_fetch(&f->refs, 1, __ATOMIC_ACQ_REL) == 0) { close(f->fd); free(f); __atomic_fetch_sub(&files_open, 1, __ATOMIC_RELAXED); }
 }
 void file_close_obj(void *obj) { file_put(obj); }
 
@@ -128,10 +130,17 @@ static uint32_t open_file(const char *winpath, uint32_t access, uint32_t disp) {
     int fd = open(path, fl, 0644);
     int error=fd<0?errno:0;
     if (trace_files()) fprintf(stderr, "[file] open %s (%s) -> %d errno=%d\n", winpath, path, fd,error);
+    if (fd < 0 && error != ENOENT) {                 // "not there" is routine; anything else is worth seeing
+        static unsigned other, exhausted;              // separate caps: path noise must not hide fd exhaustion
+        int emfile = error == EMFILE || error == ENFILE;
+        if (__atomic_fetch_add(emfile ? &exhausted : &other, 1, __ATOMIC_RELAXED) < 16)
+            fprintf(stderr, "[file] open failed: %s (%s) errno=%d (%s), %d files open\n", winpath, path, error, strerror(error),
+                    __atomic_load_n(&files_open, __ATOMIC_RELAXED));
+    }
     if (fd < 0) { SETERR(2); return 0xFFFFFFFFu; }   // ERROR_FILE_NOT_FOUND, INVALID_HANDLE_VALUE
     FileObj *f = malloc(sizeof *f);
     if (!f) { close(fd); SETERR(8 /* ERROR_NOT_ENOUGH_MEMORY */); return 0xFFFFFFFFu; }
-    f->fd = fd; f->refs = 1;
+    f->fd = fd; f->refs = 1; __atomic_fetch_add(&files_open, 1, __ATOMIC_RELAXED);
     return handle_new(H_FILE, f);
 }
 SHIM(CreateFileA) { RET(c, open_file(GSTR(ARG(c, 0)), ARG(c, 1), ARG(c, 4)), 7); }
